@@ -1,5 +1,5 @@
-import { getDb } from "@lib/db/client";
-import * as schema from "@lib/db/schema";
+import { getDb } from "@/lib/db/client";
+import * as schema from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -17,10 +17,9 @@ export async function GET(
     const db = getDb();
 
     // Get next big thing options
-    const options = await db.query.nextBigThingOptions.findMany({
-      where: eq(schema.nextBigThingOptions.projectId, id),
-      orderBy: [schema.nextBigThingOptions.createdAt],
-    });
+    const options = await db.select().from(schema.nextBigThingOptions).where(
+      eq(schema.nextBigThingOptions.projectId, id)
+    ).orderBy(schema.nextBigThingOptions.createdAt);
 
     return NextResponse.json({
       projectId: id,

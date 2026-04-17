@@ -1,8 +1,8 @@
-import { getDb } from "@lib/db/client";
-import * as schema from "@lib/db/schema";
+import { getDb } from "@/lib/db/client";
+import * as schema from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
-import { getProject, createAnalysisRun, updateAnalysisRun } from "@lib/services/db-service";
+import { getProject, createAnalysisRun, updateAnalysisRun } from "@/lib/services/db-service";
 
 // Analysis stages
 type AnalysisStage = 
@@ -39,12 +39,12 @@ export async function POST(
     const db = getDb();
 
     // If resuming, find the pending/running stage
-    let analysisRun = await db.query.analysisRuns.findFirst({
-      where: and(
+    let analysisRun = await db.select().from(schema.analysisRuns).where(
+      and(
         eq(schema.analysisRuns.projectId, id),
         eq(schema.analysisRuns.status, "pending")
-      ),
-    });
+      )
+    ).limit(1).then(rows => rows[0]);
 
     // If no pending run found and not resuming, create new
     if (!analysisRun && !resume) {
@@ -94,10 +94,9 @@ export async function GET(
 
     const db = getDb();
     
-    const analysisRuns = await db.query.analysisRuns.findMany({
-      where: eq(schema.analysisRuns.projectId, id),
-      orderBy: [schema.analysisRuns.createdAt],
-    });
+    const analysisRuns = await db.select().from(schema.analysisRuns).where(
+      eq(schema.analysisRuns.projectId, id)
+    ).orderBy(schema.analysisRuns.createdAt);
 
     return NextResponse.json({
       projectId: id,

@@ -93,7 +93,7 @@ export interface StrategyReport {
   };
   competitorAnalysis: {
     marketPosition: string;
-    competitive advantages: string[];
+    competitiveAdvantages: string[];
     weaknesses: string[];
   };
   nextBigThingOptions: NextBigThingStrategy[];

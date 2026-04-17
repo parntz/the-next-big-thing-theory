@@ -4,7 +4,6 @@ import {
   sqliteTable,
   text,
   real,
-  boolean,
 } from "drizzle-orm/sqlite-core";
 
 /**
@@ -39,7 +38,7 @@ export const companies = sqliteTable("companies", {
   name: text("name").notNull(),
   websiteUrl: text("website_url"),
   description: text("description"),
-  isMainCompany: boolean("is_main_company").default(false),
+  isMainCompany: integer("is_main_company", { mode: "boolean" }).default(false),
   createdAt: integer("created_at", { mode: "timestamp" })
     .default(sql`CURRENT_TIMESTAMP`)
     .notNull(),
@@ -56,7 +55,7 @@ export const competitors = sqliteTable("competitors", {
   companyId: integer("company_id").references(() => companies.id),
   name: text("name").notNull(),
   description: text("description"),
-  isMain: boolean("is_main").default(false),
+  isMain: integer("is_main", { mode: "boolean" }).default(false),
   websiteUrl: text("website_url"),
   revenueEstimate: text("revenue_estimate"),
   marketShare: text("market_share"),
@@ -110,10 +109,10 @@ export const factors = sqliteTable("factors", {
     .notNull(),
   name: text("name").notNull(),
   description: text("description"),
-  isEliminated: boolean("is_eliminated").default(false),
-  isReduced: boolean("is_reduced").default(false),
-  isRaised: boolean("is_raised").default(false),
-  isNewCreation: boolean("is_new_creation").default(false),
+  isEliminated: integer("is_eliminated", { mode: "boolean" }).default(false),
+  isReduced: integer("is_reduced", { mode: "boolean" }).default(false),
+  isRaised: integer("is_raised", { mode: "boolean" }).default(false),
+  isNewCreation: integer("is_new_creation", { mode: "boolean" }).default(false),
   createdAt: integer("created_at", { mode: "timestamp" })
     .default(sql`CURRENT_TIMESTAMP`)
     .notNull(),
@@ -137,7 +136,7 @@ export const companyFactorScores = sqliteTable("company_factor_scores", {
   confidence: real("confidence").notNull(), // 0-1
   explanation: text("explanation").notNull(),
   evidence: text("evidence", { mode: "json" }), // Array of evidence items
-  isMainCompany: boolean("is_main_company").default(false),
+  isMainCompany: integer("is_main_company", { mode: "boolean" }).default(false),
   createdAt: integer("created_at", { mode: "timestamp" })
     .default(sql`CURRENT_TIMESTAMP`)
     .notNull(),

@@ -1,8 +1,8 @@
-import { getDb } from "@lib/db/client";
-import * as schema from "@lib/db/schema";
+import { getDb } from "@/lib/db/client";
+import * as schema from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
-import { getCompanyFactorScoresByProject, updateFactor, getFactorsByProject } from "@lib/services/db-service";
+import { getCompanyFactorScoresByProject, updateFactor, getFactorsByProject } from "@/lib/services/db-service";
 
 export async function POST(
   request: NextRequest,
@@ -21,9 +21,9 @@ export async function POST(
     const db = getDb();
 
     // Validate factor belongs to project
-    const factor = await db.query.factors.findFirst({
-      where: eq(schema.factors.id, factorId),
-    });
+    const factor = await db.select().from(schema.factors).where(
+      eq(schema.factors.id, factorId)
+    ).limit(1).then(rows => rows[0]);
 
     if (!factor || factor.projectId !== id) {
       return NextResponse.json({ error: "Factor not found or belongs to different project" }, { status: 404 });
@@ -41,9 +41,9 @@ export async function POST(
       .where(eq(schema.factors.id, factorId));
 
     // Get company factor scores and update them
-    const scores = await db.query.companyFactorScores.findMany({
-      where: eq(schema.companyFactorScores.projectId, id),
-    });
+    const scores = await db.select().from(schema.companyFactorScores).where(
+      eq(schema.companyFactorScores.projectId, id)
+    );
 
     const updatedScores = scores.map(scoreItem => ({
       companyId: scoreItem.companyId,

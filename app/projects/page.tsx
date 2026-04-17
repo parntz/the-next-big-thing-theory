@@ -4,9 +4,9 @@ import * as schema from "@lib/db/schema";
 
 export default async function ProjectsPage() {
   const db = getDb();
-  const projects = await db.query.projects.findMany({
-    orderBy: [schema.projects.createdAt.desc],
-  });
+  const projects = await db.select().from(schema.projects).orderBy(
+    schema.projects.createdAt
+  ).limit(100);
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">

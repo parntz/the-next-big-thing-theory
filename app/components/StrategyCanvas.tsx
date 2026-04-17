@@ -176,7 +176,7 @@ export function StrategyCanvas({ projectId }: StrategyCanvasProps) {
                     return (
                       <div className="bg-white dark:bg-gray-800 p-3 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700">
                         <p className="font-medium mb-2">{data.fullName}</p>
-                        {payload.map((entry: { name: string; value: number; color: string }, index: number) => (
+                        {payload.map((entry, index) => (
                           <div key={index} className="flex items-center gap-2 text-sm">
                             <div
                               className="w-3 h-3 rounded-full"

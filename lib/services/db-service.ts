@@ -31,9 +31,9 @@ export async function createProject(data: NewProject): Promise<Project> {
 
 export async function getProject(id: number): Promise<Project | undefined> {
   const db = getDb();
-  return db.query.projects.findFirst({
-    where: eq(schema.projects.id, id),
-  });
+  return db.select().from(schema.projects).where(
+    eq(schema.projects.id, id)
+  ).limit(1).then(rows => rows[0]);
 }
 
 export async function updateProject(id: number, data: Partial<NewProject>): Promise<Project | undefined> {
@@ -51,10 +51,9 @@ export async function updateProject(id: number, data: Partial<NewProject>): Prom
 
 export async function listProjects(limit: number = 100): Promise<Project[]> {
   const db = getDb();
-  return db.query.projects.findMany({
-    orderBy: [sql`created_at DESC`],
-    limit,
-  });
+  return db.select().from(schema.projects).orderBy(
+    sql`created_at DESC`
+  ).limit(limit);
 }
 
 // Company Service
@@ -66,16 +65,16 @@ export async function createCompany(data: NewCompany): Promise<Company> {
 
 export async function getCompaniesByProject(projectId: number): Promise<Company[]> {
   const db = getDb();
-  return db.query.companies.findMany({
-    where: eq(schema.companies.projectId, projectId),
-  });
+  return db.select().from(schema.companies).where(
+    eq(schema.companies.projectId, projectId)
+  );
 }
 
 export async function getCompany(id: number): Promise<Company | undefined> {
   const db = getDb();
-  return db.query.companies.findFirst({
-    where: eq(schema.companies.id, id),
-  });
+  return db.select().from(schema.companies).where(
+    eq(schema.companies.id, id)
+  ).limit(1).then(rows => rows[0]);
 }
 
 export async function updateCompany(id: number, data: Partial<NewCompany>): Promise<Company | undefined> {
@@ -97,16 +96,16 @@ export async function createCompetitor(data: NewCompetitor): Promise<Competitor>
 
 export async function getCompetitorsByProject(projectId: number): Promise<Competitor[]> {
   const db = getDb();
-  return db.query.competitors.findMany({
-    where: eq(schema.competitors.projectId, projectId),
-  });
+  return db.select().from(schema.competitors).where(
+    eq(schema.competitors.projectId, projectId)
+  );
 }
 
 export async function getCompetitor(id: number): Promise<Competitor | undefined> {
   const db = getDb();
-  return db.query.competitors.findFirst({
-    where: eq(schema.competitors.id, id),
-  });
+  return db.select().from(schema.competitors).where(
+    eq(schema.competitors.id, id)
+  ).limit(1).then(rows => rows[0]);
 }
 
 // Analysis Run Service
@@ -118,17 +117,16 @@ export async function createAnalysisRun(data: NewAnalysisRun): Promise<AnalysisR
 
 export async function getAnalysisRun(id: number): Promise<AnalysisRun | undefined> {
   const db = getDb();
-  return db.query.analysisRuns.findFirst({
-    where: eq(schema.analysisRuns.id, id),
-  });
+  return db.select().from(schema.analysisRuns).where(
+    eq(schema.analysisRuns.id, id)
+  ).limit(1).then(rows => rows[0]);
 }
 
 export async function getAnalysisRunsByProject(projectId: number): Promise<AnalysisRun[]> {
   const db = getDb();
-  return db.query.analysisRuns.findMany({
-    where: eq(schema.analysisRuns.projectId, projectId),
-    orderBy: [schema.analysisRuns.createdAt],
-  });
+  return db.select().from(schema.analysisRuns).where(
+    eq(schema.analysisRuns.projectId, projectId)
+  ).orderBy(schema.analysisRuns.createdAt);
 }
 
 export async function updateAnalysisRun(
@@ -153,9 +151,9 @@ export async function createFactor(data: NewFactor): Promise<Factor> {
 
 export async function getFactorsByProject(projectId: number): Promise<Factor[]> {
   const db = getDb();
-  return db.query.factors.findMany({
-    where: eq(schema.factors.projectId, projectId),
-  });
+  return db.select().from(schema.factors).where(
+    eq(schema.factors.projectId, projectId)
+  );
 }
 
 export async function updateFactor(id: number, data: Partial<NewFactor>): Promise<Factor | undefined> {
@@ -177,16 +175,16 @@ export async function createCompanyFactorScore(data: NewCompanyFactorScore): Pro
 
 export async function getCompanyFactorScoresByProject(projectId: number): Promise<CompanyFactorScore[]> {
   const db = getDb();
-  return db.query.companyFactorScores.findMany({
-    where: eq(schema.companyFactorScores.projectId, projectId),
-  });
+  return db.select().from(schema.companyFactorScores).where(
+    eq(schema.companyFactorScores.projectId, projectId)
+  );
 }
 
 export async function getScoresForCompany(companyId: number): Promise<CompanyFactorScore[]> {
   const db = getDb();
-  return db.query.companyFactorScores.findMany({
-    where: eq(schema.companyFactorScores.companyId, companyId),
-  });
+  return db.select().from(schema.companyFactorScores).where(
+    eq(schema.companyFactorScores.companyId, companyId)
+  );
 }
 
 // Evidence Item Service
@@ -198,16 +196,16 @@ export async function createEvidenceItem(data: NewEvidenceItem): Promise<Evidenc
 
 export async function getEvidenceByProject(projectId: number): Promise<EvidenceItem[]> {
   const db = getDb();
-  return db.query.evidenceItems.findMany({
-    where: eq(schema.evidenceItems.projectId, projectId),
-  });
+  return db.select().from(schema.evidenceItems).where(
+    eq(schema.evidenceItems.projectId, projectId)
+  );
 }
 
 export async function getEvidenceByCompany(companyId: number): Promise<EvidenceItem[]> {
   const db = getDb();
-  return db.query.evidenceItems.findMany({
-    where: eq(schema.evidenceItems.companyId, companyId),
-  });
+  return db.select().from(schema.evidenceItems).where(
+    eq(schema.evidenceItems.companyId, companyId)
+  );
 }
 
 // Next Big Thing Option Service
@@ -219,16 +217,16 @@ export async function createNextBigThingOption(data: NewNextBigThingOption): Pro
 
 export async function getNextBigThingOptionsByProject(projectId: number): Promise<NextBigThingOption[]> {
   const db = getDb();
-  return db.query.nextBigThingOptions.findMany({
-    where: eq(schema.nextBigThingOptions.projectId, projectId),
-  });
+  return db.select().from(schema.nextBigThingOptions).where(
+    eq(schema.nextBigThingOptions.projectId, projectId)
+  );
 }
 
 export async function getNextBigThingOption(id: number): Promise<NextBigThingOption | undefined> {
   const db = getDb();
-  return db.query.nextBigThingOptions.findFirst({
-    where: eq(schema.nextBigThingOptions.id, id),
-  });
+  return db.select().from(schema.nextBigThingOptions).where(
+    eq(schema.nextBigThingOptions.id, id)
+  ).limit(1).then(rows => rows[0]);
 }
 
 // Report Service
@@ -240,10 +238,9 @@ export async function createReport(data: NewReport): Promise<Report> {
 
 export async function getReportByProject(projectId: number): Promise<Report | undefined> {
   const db = getDb();
-  return db.query.reports.findFirst({
-    where: eq(schema.reports.projectId, projectId),
-    orderBy: [schema.reports.createdAt.desc],
-  });
+  return db.select().from(schema.reports).where(
+    eq(schema.reports.projectId, projectId)
+  ).orderBy(schema.reports.createdAt).limit(1).then(rows => rows[0]);
 }
 
 export async function updateReport(id: number, data: Partial<NewReport>): Promise<Report | undefined> {

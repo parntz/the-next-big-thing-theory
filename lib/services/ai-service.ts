@@ -1,10 +1,7 @@
 import { z } from "zod";
-import { together } from "ai";
-import { createParser } from "ai";
-import { type CoreMessage } from "ai";
 
 // AI Model Configuration - Together.ai
-// Cost-efficient model choices for different tasks
+// Together.ai provides OpenAI-compatible API
 export const AI_MODELS = {
   summary: process.env.AI_MODEL_SUMMARY || "meta-llama/Meta-Llama-3-70B-Instruct-Turbo",
   analysis: process.env.AI_MODEL_ANALYSIS || "meta-llama/Meta-Llama-3-70B-Instruct-Turbo",
@@ -22,6 +19,7 @@ export const AI_COSTS = {
 export class AIService {
   private apiKey: string;
   private model: string;
+  private apiUrl: string;
 
   constructor(apiKey?: string) {
     this.apiKey = apiKey || process.env.TOGETHER_API_KEY || "";
@@ -30,10 +28,11 @@ export class AIService {
     }
     
     this.model = AI_MODELS.analysis;
+    this.apiUrl = "https://api.together.xyz/v1/chat/completions";
   }
 
   async generateResponse(
-    messages: CoreMessage[],
+    messages: Array<{ role: string; content: string }>,
     temperature: number = 0.7,
     maxTokens: number = 2000,
     model?: string
@@ -43,21 +42,34 @@ export class AIService {
     }
 
     try {
-      const provider = together(this.apiKey, { model: model || this.model });
-      
-      // Note: This uses the AI SDK's provider integration
-      // In production, you'd use the actual Together API directly
-      const response = await provider.chat(this.model, {
-        messages,
-        temperature,
-        maxTokens,
-        responseFormat: { type: "json_object" },
+      const response = await fetch(this.apiUrl, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${this.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: model || this.model,
+          messages,
+          temperature,
+          max_tokens: maxTokens,
+          response_format: { type: "json_object" },
+        }),
       });
 
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`AI API error: ${response.status} ${error}`);
+      }
+
+      const data = await response.json();
+      
+      const content = data.choices[0]?.message?.content || "";
+      
       return {
-        content: response.messages[0]?.content?.toString() || "",
-        inputTokens: 0, // Would need to parse from actual API response
-        outputTokens: 0,
+        content,
+        inputTokens: data.usage?.prompt_tokens || 0,
+        outputTokens: data.usage?.completion_tokens || 0,
       };
     } catch (error) {
       console.error("AI API error:", error);

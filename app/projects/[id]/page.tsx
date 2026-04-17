@@ -4,9 +4,9 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
-import { StrategyCanvas } from "@components/StrategyCanvas";
-import { NextBigThingOptions } from "@components/NextBigThingOptions";
-import { ReportView } from "@components/ReportView";
+import { StrategyCanvas } from "@/app/components/StrategyCanvas";
+import { NextBigThingOptions } from "@/app/components/NextBigThingOptions";
+import { ReportView } from "@/app/components/ReportView";
 
 interface Project {
   id: number;

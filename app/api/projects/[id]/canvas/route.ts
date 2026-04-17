@@ -1,5 +1,5 @@
-import { getDb } from "@lib/db/client";
-import * as schema from "@lib/db/schema";
+import { getDb } from "@/lib/db/client";
+import * as schema from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -17,19 +17,19 @@ export async function GET(
     const db = getDb();
 
     // Get factors
-    const factors = await db.query.factors.findMany({
-      where: eq(schema.factors.projectId, id),
-    });
+    const factors = await db.select().from(schema.factors).where(
+      eq(schema.factors.projectId, id)
+    );
 
     // Get companies
-    const companies = await db.query.companies.findMany({
-      where: eq(schema.companies.projectId, id),
-    });
+    const companies = await db.select().from(schema.companies).where(
+      eq(schema.companies.projectId, id)
+    );
 
     // Get scores
-    const scores = await db.query.companyFactorScores.findMany({
-      where: eq(schema.companyFactorScores.projectId, id),
-    });
+    const scores = await db.select().from(schema.companyFactorScores).where(
+      eq(schema.companyFactorScores.projectId, id)
+    );
 
     // Build canvas data structure
     const canvasData = {

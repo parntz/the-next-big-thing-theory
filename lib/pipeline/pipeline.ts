@@ -54,10 +54,9 @@ export async function GET(request: Request) {
   try {
     const db = getDb();
     
-    const projects = await db.query.projects.findMany({
-      orderBy: [schema.projects.createdAt.desc],
-      limit: 100,
-    });
+    const projects = await db.select().from(schema.projects).orderBy(
+      schema.projects.createdAt
+    ).limit(100);
 
     return Response.json(
       projects.map(p => ({

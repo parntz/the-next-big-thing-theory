@@ -1,8 +1,8 @@
-import { getDb } from "@lib/db/client";
-import * as schema from "@lib/db/schema";
+import { getDb } from "@/lib/db/client";
+import * as schema from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
-import { getProject, getCompaniesByProject, getCompetitorsByProject } from "@lib/services/db-service";
+import { getProject, getCompaniesByProject, getCompetitorsByProject } from "@/lib/services/db-service";
 
 export async function GET(
   request: NextRequest,

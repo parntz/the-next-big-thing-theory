@@ -1,5 +1,5 @@
-import { getDb } from "@lib/db/client";
-import * as schema from "@lib/db/schema";
+import { getDb } from "@/lib/db/client";
+import * as schema from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -17,10 +17,9 @@ export async function GET(
     const db = getDb();
 
     // Get report for this project
-    const report = await db.query.reports.findFirst({
-      where: eq(schema.reports.projectId, id),
-      orderBy: [schema.reports.createdAt.desc],
-    });
+    const report = await db.select().from(schema.reports).where(
+      eq(schema.reports.projectId, id)
+    ).orderBy(schema.reports.createdAt).limit(1).then(rows => rows[0]);
 
     if (!report) {
       return NextResponse.json({ error: "Report not found" }, { status: 404 });
@@ -28,9 +27,9 @@ export async function GET(
 
     // Get analysis run
     const analysisRun = report.analysisRunId 
-      ? await db.query.analysisRuns.findFirst({
-          where: eq(schema.analysisRuns.id, report.analysisRunId),
-        })
+      ? await db.select().from(schema.analysisRuns).where(
+          eq(schema.analysisRuns.id, report.analysisRunId)
+        ).limit(1).then(rows => rows[0])
       : null;
 
     return NextResponse.json({

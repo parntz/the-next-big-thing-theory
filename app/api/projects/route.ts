@@ -1,5 +1,5 @@
-import { getDb } from "@lib/db/client";
-import * as schema from "@lib/db/schema";
+import { getDb } from "@/lib/db/client";
+import * as schema from "@/lib/db/schema";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -63,10 +63,9 @@ export async function GET(request: NextRequest) {
   try {
     const db = getDb();
     
-    const projects = await db.query.projects.findMany({
-      orderBy: [schema.projects.createdAt.desc],
-      limit: 100,
-    });
+    const projects = await db.select().from(schema.projects).orderBy(
+      schema.projects.createdAt
+    ).limit(100);
 
     return NextResponse.json(
       projects.map(p => ({
