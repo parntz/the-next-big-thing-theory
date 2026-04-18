@@ -11,6 +11,14 @@ const ProjectCreateSchema = z.object({
   notes: z.string().optional(),
 });
 
+function formatDate(timestamp: number | string | Date): string {
+  const date = new Date(timestamp);
+  if (isNaN(date.getTime())) {
+    return new Date().toISOString();
+  }
+  return date.toISOString();
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
@@ -46,7 +54,7 @@ export async function POST(request: NextRequest) {
         region: project.region,
         notes: project.notes,
         status: project.status,
-        createdAt: project.createdAt.toISOString(),
+        createdAt: formatDate(project.createdAt),
       },
       { status: 201 }
     );
@@ -76,7 +84,7 @@ export async function GET(request: NextRequest) {
         region: p.region,
         notes: p.notes,
         status: p.status,
-        createdAt: p.createdAt.toISOString(),
+        createdAt: formatDate(p.createdAt),
       }))
     );
   } catch (error) {

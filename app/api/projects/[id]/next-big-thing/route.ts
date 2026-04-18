@@ -2,6 +2,7 @@ import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
+import { formatDate } from "@/lib/utils/date";
 
 export async function GET(
   request: NextRequest,
@@ -38,7 +39,7 @@ export async function GET(
         difficulty: opt.difficulty,
         operationalImplications: opt.operationalImplications,
         revenuePotential: opt.revenuePotential,
-        createdAt: opt.createdAt.toISOString(),
+        createdAt: formatDate(opt.createdAt),
       })),
     });
   } catch (error) {
@@ -99,7 +100,7 @@ export async function POST(
       difficulty: option.difficulty,
       operationalImplications: option.operationalImplications,
       revenuePotential: option.revenuePotential,
-      createdAt: option.createdAt.toISOString(),
+      createdAt: formatDate(option.createdAt),
     }, { status: 201 });
   } catch (error) {
     console.error("Error creating next big thing option:", error);

@@ -4,6 +4,14 @@ import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { getProject, getCompaniesByProject, getCompetitorsByProject } from "@/lib/services/db-service";
 
+function formatDate(timestamp: number | string | Date): string {
+  const date = new Date(timestamp);
+  if (isNaN(date.getTime())) {
+    return new Date().toISOString();
+  }
+  return date.toISOString();
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: { id: string } }
@@ -35,7 +43,7 @@ export async function GET(
         region: project.region,
         notes: project.notes,
         status: project.status,
-        createdAt: project.createdAt.toISOString(),
+        createdAt: formatDate(project.createdAt),
       },
       companies: companies.map(c => ({
         id: c.id,
@@ -44,7 +52,7 @@ export async function GET(
         websiteUrl: c.websiteUrl,
         description: c.description,
         isMainCompany: c.isMainCompany,
-        createdAt: c.createdAt.toISOString(),
+        createdAt: formatDate(c.createdAt),
       })),
       competitors: competitors.map(comp => ({
         id: comp.id,
@@ -56,7 +64,7 @@ export async function GET(
         websiteUrl: comp.websiteUrl,
         revenueEstimate: comp.revenueEstimate,
         marketShare: comp.marketShare,
-        createdAt: comp.createdAt.toISOString(),
+        createdAt: formatDate(comp.createdAt),
       })),
     });
   } catch (error) {

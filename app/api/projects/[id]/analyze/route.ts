@@ -3,6 +3,7 @@ import * as schema from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { getProject, createAnalysisRun, updateAnalysisRun } from "@/lib/services/db-service";
+import { formatDate } from "@/lib/utils/date";
 
 // Analysis stages
 type AnalysisStage = 
@@ -73,7 +74,7 @@ export async function POST(
       projectId: analysisRun.projectId,
       stage: analysisRun.stage,
       status: analysisRun.status,
-      createdAt: analysisRun.createdAt.toISOString(),
+      createdAt: formatDate(analysisRun.createdAt),
     });
   } catch (error) {
     console.error("Error starting analysis:", error);
@@ -109,8 +110,8 @@ export async function GET(
         error: run.error,
         costCents: run.costCents,
         elapsedSeconds: run.elapsedSeconds,
-        createdAt: run.createdAt.toISOString(),
-        completedAt: run.completedAt?.toISOString(),
+        createdAt: formatDate(run.createdAt),
+        completedAt: run.completedAt ? formatDate(run.completedAt) : null,
       })),
     });
   } catch (error) {

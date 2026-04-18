@@ -2,6 +2,7 @@ import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
+import { formatDate } from "@/lib/utils/date";
 
 export async function GET(
   request: NextRequest,
@@ -42,7 +43,7 @@ export async function GET(
       nextBigThingOptions: report.nextBigThingOptions,
       recommendedStrategy: report.recommendedStrategy,
       confidenceScore: report.confidenceScore,
-      createdAt: report.createdAt.toISOString(),
+      createdAt: formatDate(report.createdAt),
       analysisRunId: report.analysisRunId,
       analysisStage: analysisRun?.stage,
     });
