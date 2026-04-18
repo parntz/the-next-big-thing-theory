@@ -3,7 +3,6 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import Image from "next/image";
 import { StrategyCanvas } from "@/app/components/StrategyCanvas";
 import { NextBigThingOptions } from "@/app/components/NextBigThingOptions";
 import { ReportView } from "@/app/components/ReportView";
@@ -26,6 +25,29 @@ interface AnalysisRun {
   createdAt: string;
 }
 
+const ANALYSIS_STAGES = [
+  { key: "business_research", label: "Business Research" },
+  { key: "competitor_discovery", label: "Competitor Discovery" },
+  { key: "competitor_normalization", label: "Analyzing Competitors" },
+  { key: "factor_generation", label: "Generating Factors" },
+  { key: "company_scoring", label: "Scoring Companies" },
+  { key: "strategy_canvas", label: "Building Strategy Canvas" },
+  { key: "next_big_thing", label: "Generating Strategies" },
+  { key: "report_assembly", label: "Assembling Report" },
+];
+
+const STAGE_LABELS: Record<string, string> = {
+  business_research: "Business Research",
+  competitor_discovery: "Competitor Discovery",
+  competitor_normalization: "Analyzing Competitors",
+  factor_generation: "Generating Factors",
+  company_scoring: "Scoring Companies",
+  strategy_canvas: "Building Strategy Canvas",
+  next_big_thing: "Generating Strategies",
+  report_assembly: "Assembling Report",
+  complete: "Analysis Complete",
+};
+
 export default function ProjectPage({ params }: { params: { id: string } }) {
   const router = useRouter();
   const projectId = parseInt(params.id, 10);
@@ -34,6 +56,9 @@ export default function ProjectPage({ params }: { params: { id: string } }) {
   const [analysisRuns, setAnalysisRuns] = useState<AnalysisRun[]>([]);
   const [activeTab, setActiveTab] = useState<"canvas" | "strategy" | "report">("canvas");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analysisRefreshKey, setAnalysisRefreshKey] = useState(0);
+  const [currentStage, setCurrentStage] = useState<string | null>(null);
+  const [analysisProgress, setAnalysisProgress] = useState(0);
 
   useEffect(() => {
     const fetchProject = async () => {
@@ -54,23 +79,58 @@ export default function ProjectPage({ params }: { params: { id: string } }) {
 
   const startAnalysis = async () => {
     setIsAnalyzing(true);
+    setCurrentStage(STAGE_LABELS["business_research"]);
+    setAnalysisProgress(0);
     try {
-      const response = await fetch(`/api/projects/${projectId}/analyze`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ stage: "business_research" }),
-      });
+      let currentStageKey = "business_research";
+      let hasPendingStage = true;
+      let stageIndex = 0;
 
-      if (response.ok) {
+      while (hasPendingStage) {
+        setCurrentStage(STAGE_LABELS[currentStageKey]);
+        setAnalysisProgress(Math.round((stageIndex / ANALYSIS_STAGES.length) * 100));
+        
+        const response = await fetch(`/api/projects/${projectId}/analyze`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ stage: currentStageKey }),
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          console.error("Analysis error:", errorData);
+          break;
+        }
+
         const data = await response.json();
+        
         setAnalysisRuns(prev => [...prev, data]);
+
+        // Check if analysis is complete or if there's a next stage
+        if (data.completed || data.stage === "complete" || data.status !== "pending") {
+          hasPendingStage = false;
+        } else {
+          // Continue with the next stage
+          currentStageKey = data.stage;
+          stageIndex++;
+        }
       }
+
+      setAnalysisProgress(100);
+      setCurrentStage(STAGE_LABELS["complete"]);
+      
+      // Trigger refresh of canvas/report data
+      setAnalysisRefreshKey(prev => prev + 1);
     } catch (error) {
       console.error("Error starting analysis:", error);
     } finally {
-      setIsAnalyzing(false);
+      setTimeout(() => {
+        setIsAnalyzing(false);
+        setCurrentStage(null);
+        setAnalysisProgress(0);
+      }, 1500); // Show complete message for 1.5 seconds
     }
   };
 
@@ -120,13 +180,26 @@ export default function ProjectPage({ params }: { params: { id: string } }) {
               </div>
             </div>
 
-            {!isAnalyzing && (
+            {!isAnalyzing ? (
               <button
                 onClick={startAnalysis}
                 className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-colors"
               >
                 Start Analysis
               </button>
+            ) : (
+              <div className="flex items-center gap-4">
+                <div className="text-right">
+                  <p className="text-sm font-medium text-blue-600">{currentStage}</p>
+                  <div className="w-48 h-2 bg-gray-200 rounded-full overflow-hidden mt-1">
+                    <div 
+                      className="h-full bg-blue-600 transition-all duration-300 ease-out"
+                      style={{ width: `${analysisProgress}%` }}
+                    />
+                  </div>
+                </div>
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+              </div>
             )}
           </div>
         </div>
@@ -171,9 +244,9 @@ export default function ProjectPage({ params }: { params: { id: string } }) {
 
         {/* Content */}
         <div className="min-h-[500px]">
-          {activeTab === "canvas" && <StrategyCanvas projectId={projectId} />}
-          {activeTab === "strategy" && <NextBigThingOptions projectId={projectId} />}
-          {activeTab === "report" && <ReportView projectId={projectId} />}
+          {activeTab === "canvas" && <StrategyCanvas key={`canvas-${analysisRefreshKey}`} projectId={projectId} />}
+          {activeTab === "strategy" && <NextBigThingOptions key={`strategy-${analysisRefreshKey}`} projectId={projectId} />}
+          {activeTab === "report" && <ReportView key={`report-${analysisRefreshKey}`} projectId={projectId} />}
         </div>
       </div>
     </div>

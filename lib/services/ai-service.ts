@@ -2,17 +2,18 @@ import { z } from "zod";
 
 // AI Model Configuration - Together.ai
 // Together.ai provides OpenAI-compatible API
+// Using serverless models that work without dedicated endpoints
 export const AI_MODELS = {
-  summary: process.env.AI_MODEL_SUMMARY || "meta-llama/Meta-Llama-3-70B-Instruct-Turbo",
-  analysis: process.env.AI_MODEL_ANALYSIS || "meta-llama/Meta-Llama-3-70B-Instruct-Turbo",
-  strategy: process.env.AI_MODEL_STRATEGY || "meta-llama/Meta-Llama-3-70B-Instruct-Turbo",
+  summary: process.env.AI_MODEL_SUMMARY || "MiniMaxAI/MiniMax-M2.7",
+  analysis: process.env.AI_MODEL_ANALYSIS || "MiniMaxAI/MiniMax-M2.7",
+  strategy: process.env.AI_MODEL_STRATEGY || "MiniMaxAI/MiniMax-M2.7",
 };
 
 // Cost estimates per 1M tokens (approximate)
 export const AI_COSTS = {
-  summary: { input: 0.9, output: 0.9 }, // Llama 3 70B
-  analysis: { input: 0.9, output: 0.9 },
-  strategy: { input: 0.9, output: 0.9 },
+  summary: { input: 0.01, output: 0.01 }, // MiniMax M2.7
+  analysis: { input: 0.01, output: 0.01 },
+  strategy: { input: 0.01, output: 0.01 },
 };
 
 // AI Service class for Together.ai integration
@@ -41,7 +42,7 @@ export class AIService {
       throw new Error("AI API key not configured");
     }
 
-    try {
+    const attemptGenerate = async (attemptMaxTokens: number): Promise<{ content: string; inputTokens: number; outputTokens: number }> => {
       const response = await fetch(this.apiUrl, {
         method: "POST",
         headers: {
@@ -52,7 +53,7 @@ export class AIService {
           model: model || this.model,
           messages,
           temperature,
-          max_tokens: maxTokens,
+          max_tokens: attemptMaxTokens,
           response_format: { type: "json_object" },
         }),
       });
@@ -64,17 +65,70 @@ export class AIService {
 
       const data = await response.json();
       
-      const content = data.choices[0]?.message?.content || "";
+      let content = data.choices[0]?.message?.content || "";
+      
+      // Try to fix common JSON issues
+      content = this.fixJSON(content);
+      
+      // Validate it's valid JSON
+      try {
+        JSON.parse(content);
+      } catch {
+        // If still invalid, try to fix more issues
+        content = this.fixJSON(content, true);
+        JSON.parse(content); // Will throw if still invalid
+      }
       
       return {
         content,
         inputTokens: data.usage?.prompt_tokens || 0,
         outputTokens: data.usage?.completion_tokens || 0,
       };
-    } catch (error) {
-      console.error("AI API error:", error);
-      throw new Error(`AI generation failed: ${error instanceof Error ? error.message : "Unknown error"}`);
+    };
+
+    try {
+      // First attempt
+      return await attemptGenerate(maxTokens);
+    } catch (firstError) {
+      // If JSON is invalid, retry with more tokens (in case response was truncated)
+      if (firstError.message.includes("JSON")) {
+        console.warn("Initial JSON parse failed, retrying with more tokens...");
+        try {
+          return await attemptGenerate(maxTokens * 2);
+        } catch (secondError) {
+          console.error("Retry also failed:", secondError);
+          throw new Error(`AI generation failed after retry: ${secondError instanceof Error ? secondError.message : "Unknown error"}`);
+        }
+      }
+      throw firstError;
     }
+  }
+
+  // Helper to fix common JSON issues
+  fixJSON(str: string, aggressive: boolean = false): string {
+    // Remove trailing commas before closing braces/brackets
+    str = str.replace(/,(\s*[}\]])/g, '$1');
+    
+    if (aggressive) {
+      // Try to find and fix unterminated strings
+      // Look for patterns like "value that didn't close
+      const unterminatedMatch = str.match(/"([^"\\]|\\.)*$/);
+      if (unterminatedMatch) {
+        // Find where the unterminated string starts and try to close it
+        const beforeUnterminated = str.substring(0, unterminatedMatch.index);
+        const unterminated = unterminatedMatch[0];
+        // Try to find the proper end by looking for the next property or closing brace
+        const fixed = beforeUnterminated + unterminated + '" }';
+        try {
+          JSON.parse(fixed);
+          return fixed;
+        } catch {
+          // If still invalid, return original for error propagation
+        }
+      }
+    }
+    
+    return str;
   }
 
   // Cost calculation helper

@@ -1,12 +1,65 @@
+"use client";
+
 import Link from "next/link";
 import { getDb } from "@lib/db/client";
 import * as schema from "@lib/db/schema";
+import { useState, useEffect } from "react";
 
-export default async function ProjectsPage() {
-  const db = getDb();
-  const projects = await db.select().from(schema.projects).orderBy(
-    schema.projects.createdAt
-  ).limit(100);
+interface Project {
+  id: number;
+  name: string;
+  websiteUrl: string;
+  category?: string;
+  region?: string;
+  notes?: string;
+  status: string;
+  createdAt: string;
+}
+
+export default function ProjectsPage() {
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [isDeleting, setIsDeleting] = useState<number | null>(null);
+
+  useEffect(() => {
+    const fetchProjects = async () => {
+      try {
+        const response = await fetch("/api/projects");
+        if (response.ok) {
+          const data = await response.json();
+          setProjects(data);
+        }
+      } catch (error) {
+        console.error("Error fetching projects:", error);
+      }
+    };
+
+    fetchProjects();
+  }, []);
+
+  const handleDelete = async (projectId: number) => {
+    if (!confirm("Are you sure you want to delete this project? All analysis data will be permanently removed.")) {
+      return;
+    }
+
+    setIsDeleting(projectId);
+    try {
+      const response = await fetch(`/api/projects/${projectId}`, {
+        method: "DELETE",
+      });
+
+      if (response.ok) {
+        setProjects(prev => prev.filter(p => p.id !== projectId));
+      } else {
+        const errorData = await response.json();
+        alert(`Failed to delete project: ${errorData.error}`);
+      }
+    } catch (error) {
+      console.error("Error deleting project:", error);
+      alert("Failed to delete project");
+    } finally {
+      setIsDeleting(null);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
@@ -36,12 +89,11 @@ export default async function ProjectsPage() {
         ) : (
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
             {projects.map(project => (
-              <Link
-                key={project.id}
-                href={`/projects/${project.id}`}
-                className="block"
+              <div 
+                key={project.id} 
+                className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow hover:shadow-lg transition-shadow h-full flex flex-col"
               >
-                <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow hover:shadow-lg transition-shadow h-full">
+                <Link href={`/projects/${project.id}`} className="block flex-grow">
                   <h3 className="text-xl font-semibold mb-2">{project.name}</h3>
                   <p className="text-gray-600 dark:text-gray-400 mb-4 truncate">
                     {project.websiteUrl}
@@ -63,8 +115,17 @@ export default async function ProjectsPage() {
                       {project.status}
                     </span>
                   </div>
+                </Link>
+                <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+                  <button
+                    onClick={() => handleDelete(project.id)}
+                    disabled={isDeleting === project.id}
+                    className="w-full px-4 py-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors text-sm font-medium disabled:opacity-50"
+                  >
+                    {isDeleting === project.id ? "Deleting..." : "Delete Project"}
+                  </button>
                 </div>
-              </Link>
+              </div>
             ))}
           </div>
         )}

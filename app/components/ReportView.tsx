@@ -98,9 +98,9 @@ export function ReportView({ projectId }: ReportViewProps) {
           <div>
             <h4 className="font-medium mb-2">Your Company</h4>
             <p className="text-gray-600 dark:text-gray-400 mb-2">
-              {report.currentPositioning.mainCompany.name}
+              {report.currentPositioning?.mainCompany?.name || "N/A"}
             </p>
-            {report.currentPositioning.mainCompany.description && (
+            {report.currentPositioning?.mainCompany?.description && (
               <p className="text-sm text-gray-500">
                 {report.currentPositioning.mainCompany.description}
               </p>
@@ -109,7 +109,7 @@ export function ReportView({ projectId }: ReportViewProps) {
           <div>
             <h4 className="font-medium mb-2">Key Findings</h4>
             <ul className="space-y-2">
-              {report.currentPositioning.keyFindings.map((finding, index) => (
+              {(report.currentPositioning?.keyFindings || []).map((finding: string, index: number) => (
                 <li key={index} className="flex items-start gap-2 text-sm">
                   <span className="text-blue-500 mt-0.5">•</span>
                   <span>{finding}</span>
@@ -125,7 +125,7 @@ export function ReportView({ projectId }: ReportViewProps) {
         <h3 className="text-xl font-semibold mb-4">Competitor Analysis</h3>
         <div className="mb-4">
           <p className="text-gray-600 dark:text-gray-400">
-            {report.competitorAnalysis.marketPosition}
+            {report.competitorAnalysis?.marketPosition || "N/A"}
           </p>
         </div>
         <div className="grid md:grid-cols-2 gap-6">
@@ -134,8 +134,8 @@ export function ReportView({ projectId }: ReportViewProps) {
               Competitive Advantages
             </h4>
             <ul className="space-y-2">
-              {report.competitorAnalysis.competitiveAdvantages.map(
-                (adv, index) => (
+              {(report.competitorAnalysis?.competitiveAdvantages || []).map(
+                (adv: string, index: number) => (
                   <li key={index} className="flex items-start gap-2 text-sm">
                     <span className="text-green-500 mt-0.5">✓</span>
                     <span>{adv}</span>
@@ -147,7 +147,7 @@ export function ReportView({ projectId }: ReportViewProps) {
           <div>
             <h4 className="font-medium text-red-600 mb-2">Areas for Improvement</h4>
             <ul className="space-y-2">
-              {report.competitorAnalysis.weaknesses.map((weakness, index) => (
+              {(report.competitorAnalysis?.weaknesses || []).map((weakness: string, index: number) => (
                 <li key={index} className="flex items-start gap-2 text-sm">
                   <span className="text-red-500 mt-0.5">!</span>
                   <span>{weakness}</span>
@@ -162,9 +162,9 @@ export function ReportView({ projectId }: ReportViewProps) {
       <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow">
         <h3 className="text-xl font-semibold mb-4">Strategic Options</h3>
         <div className="grid md:grid-cols-3 gap-4">
-          {report.nextBigThingOptions.map((option, index) => (
+          {(report.nextBigThingOptions || []).map((option: any, index: number) => (
             <div
-              key={option.id}
+              key={option.id || index}
               className={`p-4 rounded-lg border-2 ${
                 report.recommendedStrategy?.id === option.id
                   ? "border-green-500 bg-green-50 dark:bg-green-900/20"

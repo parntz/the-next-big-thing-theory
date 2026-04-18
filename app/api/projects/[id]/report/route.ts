@@ -33,15 +33,29 @@ export async function GET(
         ).limit(1).then(rows => rows[0])
       : null;
 
+    // Parse JSON fields that were stored as strings
+    const currentPositioning = typeof report.currentPositioning === 'string' 
+      ? JSON.parse(report.currentPositioning) 
+      : report.currentPositioning;
+    const competitorAnalysis = typeof report.competitorAnalysis === 'string'
+      ? JSON.parse(report.competitorAnalysis)
+      : report.competitorAnalysis;
+    const nextBigThingOptions = typeof report.nextBigThingOptions === 'string'
+      ? JSON.parse(report.nextBigThingOptions)
+      : report.nextBigThingOptions;
+    const recommendedStrategy = typeof report.recommendedStrategy === 'string'
+      ? JSON.parse(report.recommendedStrategy)
+      : report.recommendedStrategy;
+
     return NextResponse.json({
       id: report.id,
       projectId: report.projectId,
       title: report.title,
       executiveSummary: report.executiveSummary,
-      currentPositioning: report.currentPositioning,
-      competitorAnalysis: report.competitorAnalysis,
-      nextBigThingOptions: report.nextBigThingOptions,
-      recommendedStrategy: report.recommendedStrategy,
+      currentPositioning,
+      competitorAnalysis,
+      nextBigThingOptions,
+      recommendedStrategy,
       confidenceScore: report.confidenceScore,
       createdAt: formatDate(report.createdAt),
       analysisRunId: report.analysisRunId,
