@@ -444,14 +444,18 @@ async function processCompetitorNormalization(projectId: number, project: any, p
       });
     } else {
       // Create new competitor
-      const newCompetitor = await db.insert(schema.competitors).values({
+      const [newCompetitor] = await db.insert(schema.competitors).values({
         projectId,
         name: competitor.name || "Unknown",
         description: competitor.description || "",
-        websiteUrl: competitor.websiteUrl || "",
+        websiteUrl:  competitor.websiteUrl || "",
         revenueEstimate: competitor.revenueEstimate || null,
         marketShare: competitor.marketShare || null,
       }).returning();
+      
+      if (!newCompetitor) {
+        throw new Error(`Failed to insert competitor: ${competitor.name || "Unknown"}`);
+      }
       
       companyId = newCompetitor.id;
       normalized.push({
@@ -554,7 +558,7 @@ ${project.region ? `Region: ${project.region}` : ''}
     
     // Store detailed results
     const competitorResearch: Record<string, any> = {};
-    for (const [name, result] of results) {
+    for (const [name, result] of Array.from(results)) {
       competitorResearch[name] = result.content;
     }
     
@@ -600,7 +604,7 @@ async function processReviewAggregation(projectId: number, project: any, previou
       }
     };
     
-    for (const [name, result] of competitorReviewResults) {
+    for (const [name, result] of Array.from(competitorReviewResults)) {
       allReviews[name] = {
         reviews: result.reviews,
         rating: result.aggregatedRating,
@@ -698,7 +702,7 @@ async function processCompanyScoring(projectId: number, project: any, previousDa
   // Limit to top 6 competitors
   const topCompetitors = competitorsList.slice(0, 6);
   // Include the main company in scoring
-  const allCompaniesToScore = [{ name: project.name, isMain: true }, ...topCompetitors.map(c => ({ name: c.name, isMain: false }))];
+  const allCompaniesToScore = [{ name: project.name, isMain: true }, ...topCompetitors.map((c: any) => ({ name: c.name, isMain: false }))];
 
   const prompt = `Score the following companies on each factor for "${project.name}":
 

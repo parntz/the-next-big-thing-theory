@@ -17,6 +17,8 @@ interface ScrapeResult {
       text: string;
       date: string;
     }>;
+    strengths?: string[];
+    weaknesses?: string[];
   };
   error?: string;
 }
@@ -134,7 +136,7 @@ export async function scrapeCompetitors(competitors: Array<{name: string, websit
 export function formatCompetitorInsights(results: Map<string, ScrapeResult>): string {
   let insights = "\n\n## Detailed Competitor Analysis\n";
   
-  for (const [name, result] of results) {
+  for (const [name, result] of Array.from(results)) {
     if (!result.success) {
       insights += `\n### ${name}\n*Analysis failed*\n`;
       continue;

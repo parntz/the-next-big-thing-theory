@@ -68,7 +68,7 @@ export class AIService {
     }
 
     const primaryModel = this.resolveModel(model);
-    const modelType = typeof model === 'string' && ["summary", "analysis", "strategy"].includes(model) ? model as ModelType : null;
+    const modelType = typeof model === 'string' && ["summary", "analysis", "strategy"].includes(model) ? model as ModelType : undefined;
     const fallbackModel = this.getFallbackModel(modelType);
 
     const attemptGenerate = async (modelToUse: string, attemptMaxTokens: number, attempt: number = 1): Promise<{ content: string; inputTokens: number; outputTokens: number }> => {
@@ -141,7 +141,7 @@ export class AIService {
           throw fetchError;
         }
         
-        if (error.name === 'AbortError') {
+        if (error instanceof Error && error.name === 'AbortError') {
           const timeoutError = new Error(`Request timeout after ${this.requestTimeoutMs}ms`);
           timeoutError.name = 'TimeoutError';
           throw timeoutError;
