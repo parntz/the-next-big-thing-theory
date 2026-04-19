@@ -17,9 +17,11 @@ export default function NewProjectPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    console.log("Form submitted with data:", formData);
     setIsLoading(true);
 
     try {
+      console.log("Making POST request to /api/projects");
       const response = await fetch("/api/projects", {
         method: "POST",
         headers: {
@@ -28,15 +30,20 @@ export default function NewProjectPage() {
         body: JSON.stringify(formData),
       });
 
+      console.log("Response status:", response.status);
+      const data = await response.json();
+      console.log("Response data:", data);
+
       if (!response.ok) {
-        throw new Error("Failed to create project");
+        throw new Error(data.error || data.details || "Failed to create project");
       }
 
-      const data = await response.json();
+      console.log("Navigating to project:", data.id);
+      // Navigate to the new project
       router.push(`/projects/${data.id}`);
-      router.refresh();
     } catch (error) {
       console.error("Error creating project:", error);
+      alert(`Error: ${error instanceof Error ? error.message : "Failed to create project. Check browser console for details."}`);
       setIsLoading(false);
     }
   };

@@ -32,6 +32,7 @@ export async function POST(request: NextRequest) {
     }
 
     const db = getDb();
+    console.log("Database connection established");
     
     const [project] = await db
       .insert(schema.projects)
@@ -44,6 +45,8 @@ export async function POST(request: NextRequest) {
         status: "pending",
       })
       .returning();
+
+    console.log("Project created:", project.id);
 
     return NextResponse.json(
       { 
@@ -60,8 +63,9 @@ export async function POST(request: NextRequest) {
     );
   } catch (error) {
     console.error("Error creating project:", error);
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json(
-      { error: "Failed to create project" },
+      { error: "Failed to create project", details: errorMessage },
       { status: 500 }
     );
   }
