@@ -1081,99 +1081,68 @@ async function processNextBigThing(projectId: number, project: any, previousData
   ].filter(Boolean).join('\n');
 
   const prompt = `Create "Next Big Thing" strategy options for "${project.name}".
-  
-  ════════════════════════════════════════════════════════════════
-  CRITICAL BUSINESS CONTEXT (from user's description):
-  ════════════════════════════════════════════════════════════════
-  ${project.notes || 'No user description provided'}
-  
-  ════════════════════════════════════════════════════════════════
-  YOUR COMPLETE RESEARCH DATA
-  ════════════════════════════════════════════════════════════════
-  
-  **1. MAIN COMPANY DEEP RESEARCH:**
-  ${mainResearch.description || 'No deep research available'}
-  Target Market: ${mainResearch.targetMarket || 'N/A'}
-  Price Range: ${mainResearch.pricing || 'N/A'}
-  Main Products: ${(mainResearch.mainProducts || []).join(", ") || 'N/A'}
-  Unique Selling Points: ${(mainResearch.uniqueSellingPoints || []).join(", ") || 'N/A'}
-  Brand Story: ${mainResearch.brandStory || 'N/A'}
-  
-  **2. COMPETITOR DEEP ANALYSIS:**
-  ${competitorInsights || 'No competitor analysis available'}
-  
-  **3. BUSINESS ANALYSIS:**
-  - Summary: ${businessResearch.summary || 'N/A'}
-  - Key Strengths: ${(businessResearch.keyStrengths || []).join(", ")}
-  - Key Weaknesses: ${(businessResearch.keyWeaknesses || []).join(", ")}
-  - Market Position: ${businessResearch.marketPosition || 'N/A'}
-  - Unique Value Proposition: ${businessResearch.uniqueValueProposition || 'N/A'}
-  
-  **4. CUSTOMER REVIEWS & SENTIMENT:**
-  ${previousData?.mainReviewsText || 'No review data available'}
-  
-  **5. KEY FACTORS IN THIS MARKET:**
-  ${factorsList.map((f: any) => f.name).join(", ") || 'N/A'}
-  
-  ════════════════════════════════════════════════════════════════
-  TASK: Based on ALL the research above, create breakthrough strategy options
-  ════════════════════════════════════════════════════════════════
-  
-  The strategies should:
-  - Address the weaknesses shown in customer reviews
-  - Differentiate from what competitors are doing
-  - Leverage the company's unique strengths
-  - Help achieve the user's stated vision
-  
-  For each strategy option, provide:
-  - A catchy title
-  - One-sentence summary
-  - What to eliminate from the industry's formula
-  - What to reduce below industry standard
-  - What to raise above industry standard
-  - What to create that the industry has never offered
-  - Value curve showing changes
-  - Target customer segment
-  - Positioning statement
-  - Potential risks
-  - Implementation difficulty (1-10)
-  - Operational implications
-  - Revenue potential (optional)
-  
-  Provide 2-3 strategy options.`;
+
+**BUSINESS CONTEXT:** ${project.notes || 'No description provided'}
+
+**RESEARCH SUMMARY:**
+- Company: ${mainResearch.description || businessResearch.summary || project.name}
+- Market Position: ${mainResearch.targetMarket || businessResearch.marketPosition || 'N/A'}
+- Strengths: ${[...(mainResearch.strengths || []), ...(businessResearch.keyStrengths || [])].slice(0, 3).join(", ")}
+- Weaknesses: ${[...(mainResearch.weaknesses || []), ...(businessResearch.keyWeaknesses || [])].slice(0, 3).join(", ")}
+- Competitors: ${competitorInsights ? 'Analyzed' : 'Not available'}
+- Key Factors: ${factorsList.map((f: any) => f.name).join(", ") || 'N/A'}
+
+**TASK:** Create 2-3 breakthrough strategy options using ERRC (Eliminate, Reduce, Raise, Create). Each should include: title, summary, eliminate, reduce, raise, create, valueCurve, targetCustomer, positioningStatement, risks, difficulty, operationalImplications.
+
+Return JSON with 'strategy_options' or 'strategies' array.`;
 
   let content: string;
   let result: any;
   
-  try {
-    const response = await strategyService.generateResponse([
-      { role: "system", content: "You are a creative strategy expert. Generate DIVERSE, INNOVATIVE Next Big Thing strategies using the ERRC framework (Eliminate, Reduce, Raise, Create). Provide 2-3 distinctly different strategic directions. Be bold and creative. IMPORTANT: Respond with valid JSON only, with a 'strategy_options' or 'strategies' or 'nextBigThingOptions' array containing objects with ALL of these fields: title, summary, eliminate, reduce, raise, create, valueCurve, targetCustomer, positioningStatement, risks, difficulty, operationalImplications." },
-      { role: "user", content: prompt },
-    ], 0.8, 5000, "strategy");
-    content = response.content;
-    result = JSON.parse(content);
-  } catch (error) {
-    console.error("AI generation failed for next big thing:", error);
-    // Return generic strategies as fallback - but include all previous data
-    return {
-      ...previousData,
-      strategies: [
-        {
-          title: "Market Differentiation Strategy",
-          summary: "Identify and capitalize on unique market positioning",
-          eliminate: "Commoditized offerings",
-          reduce: "Average service levels",
-          raise: "Customer experience above industry standard",
-          create: "Unique value proposition",
-          targetCustomer: "Target customer segment based on business type",
-          positioningStatement: "For customers seeking differentiated experience",
-          risks: ["Implementation challenges", "Market acceptance uncertainty"],
-          difficulty: 6,
-          operationalImplications: "Requires strategic investments in customer experience",
-          revenuePotential: "Moderate to high potential",
-        }
-      ]
-    };
+  const MAX_RETRIES = 2;
+  let retryCount = 0;
+  
+  while (retryCount <= MAX_RETRIES) {
+    try {
+      // Create a custom AI service instance with extended timeout for next big thing
+      const nextBigThingAIService = new AIService();
+      nextBigThingAIService.requestTimeoutMs = 90000; // 90 seconds
+      
+      const response = await nextBigThingAIService.generateResponse([
+        { role: "system", content: "You are a creative strategy expert. Generate DIVERSE, INNOVATIVE Next Big Thing strategies using the ERRC framework (Eliminate, Reduce, Raise, Create). Provide 2-3 distinctly different strategic directions. Be bold and creative. IMPORTANT: Respond with valid JSON only, with a 'strategy_options' or 'strategies' or 'nextBigThingOptions' array containing objects with ALL of these fields: title, summary, eliminate, reduce, raise, create, valueCurve, targetCustomer, positioningStatement, risks, difficulty, operationalImplications." },
+        { role: "user", content: prompt },
+      ], 0.8, 5000, "strategy");
+      content = response.content;
+      result = JSON.parse(content);
+      break; // Success, exit retry loop
+    } catch (error) {
+      retryCount++;
+      console.error(`AI generation failed for next big thing (attempt ${retryCount}/${MAX_RETRIES}):`, error);
+      
+      if (retryCount > MAX_RETRIES) {
+        // Final attempt failed, use fallback
+        console.log("All retry attempts failed, using fallback strategies");
+        return {
+          ...previousData,
+          strategies: [
+            {
+              title: "Market Differentiation Strategy",
+              summary: "Identify and capitalize on unique market positioning",
+              eliminate: "Commoditized offerings",
+              reduce: "Average service levels",
+              raise: "Customer experience above industry standard",
+              create: "Unique value proposition",
+              targetCustomer: "Target customer segment based on business type",
+              positioningStatement: "For customers seeking differentiated experience",
+              risks: ["Implementation challenges", "Market acceptance uncertainty"],
+              difficulty: 6,
+              operationalImplications: "Requires strategic investments in customer experience",
+              revenuePotential: "Moderate to high potential",
+            }
+          ]
+        };
+      }
+    }
   }
   
   // Save strategy options to the database
