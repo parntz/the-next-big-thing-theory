@@ -6,8 +6,5 @@
   package = "@netlify/plugin-nextjs"
 
 [functions]
-  # Increase timeout to 60 seconds for API routes
-  # Default is 10 seconds, which is too short for AI analysis
   node_bundler = "esbuild"
-  # Set timeout to 60 seconds (maximum allowed)
   timeout = 60
