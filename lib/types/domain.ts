@@ -106,6 +106,9 @@ export type AnalysisStage =
   | "business_research"
   | "competitor_discovery"
   | "competitor_normalization"
+  | "deep_main_research"        // NEW: Deep dive on main company
+  | "deep_competitor_research"  // NEW: Deep dive on competitors
+  | "review_aggregation"         // NEW: Aggregate reviews from multiple sources
   | "factor_generation"
   | "company_scoring"
   | "strategy_canvas"
