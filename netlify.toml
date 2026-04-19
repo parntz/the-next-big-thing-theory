@@ -5,6 +5,7 @@
 [[plugins]]
   package = "@netlify/plugin-nextjs"
 
-[functions]
-  node_bundler = "esbuild"
-  timeout = 60
+# Configure function timeout using the correct syntax
+[[functions]]
+  path = "/api/projects/*/analyze"
+  maxDuration = 60
