@@ -50,6 +50,8 @@ export async function GET(
       companies: companies.map(c => ({
         id: c.id,
         name: c.name,
+        websiteUrl: c.websiteUrl,
+        description: c.description,
         isMain: c.isMainCompany,
       })),
       scores: scores.map(s => ({

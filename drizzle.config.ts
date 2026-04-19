@@ -5,6 +5,7 @@ export default defineConfig({
   schema: "./lib/db/schema.ts",
   out: "./drizzle",
   dbCredentials: {
-    url: "./db.sqlite",
+    url: process.env.DATABASE_URL || "./db.sqlite",
+    authToken: process.env.TURSO_AUTH_TOKEN,
   },
 });

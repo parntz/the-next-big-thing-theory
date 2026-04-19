@@ -12,7 +12,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 
-interface CanvasData {
+  interface CanvasData {
   factors: Array<{
     id: number;
     name: string;
@@ -21,6 +21,8 @@ interface CanvasData {
   companies: Array<{
     id: number;
     name: string;
+    websiteUrl: string | null;
+    description: string | null;
     isMain: boolean;
   }>;
   scores: Array<{
@@ -146,6 +148,18 @@ export function StrategyCanvas({ projectId }: StrategyCanvasProps) {
                 {company.name}
                 {company.isMain && " (Your Company)"}
               </span>
+              {company.websiteUrl && (
+                <a
+                  href={company.websiteUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                  className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 underline"
+                >
+                  {company.websiteUrl.replace(/^https?:\/\//, "").slice(0, 30)}
+                  {company.websiteUrl.length > 30 && "..."}
+                </a>
+              )}
             </label>
           ))}
         </div>
@@ -245,6 +259,48 @@ export function StrategyCanvas({ projectId }: StrategyCanvasProps) {
               </div>
             );
           })}
+        </div>
+      </div>
+
+      {/* The Competition */}
+      <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow">
+        <h3 className="text-lg font-semibold mb-4">The Competition</h3>
+        <div className="grid gap-4">
+          {canvasData.companies
+            .filter((c) => !c.isMain)
+            .map((company) => (
+              <div
+                key={company.id}
+                className="border border-gray-200 dark:border-gray-700 rounded-lg p-4"
+              >
+                {company.websiteUrl ? (
+                  <a
+                    href={company.websiteUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg -m-4 p-4 transition-colors"
+                  >
+                    <h4 className="font-medium mb-1 text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300">
+                      {company.name}
+                    </h4>
+                    {company.description && (
+                      <p className="text-sm text-gray-600 dark:text-gray-400">
+                        {company.description}
+                      </p>
+                    )}
+                  </a>
+                ) : (
+                  <div>
+                    <h4 className="font-medium mb-1">{company.name}</h4>
+                    {company.description && (
+                      <p className="text-sm text-gray-600 dark:text-gray-400">
+                        {company.description}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
         </div>
       </div>
     </div>

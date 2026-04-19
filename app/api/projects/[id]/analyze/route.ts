@@ -4,7 +4,7 @@ import { eq, and, sql } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { getProject, createAnalysisRun, updateAnalysisRun, getCompaniesByProject, getCompetitorsByProject, createFactor, createCompany, createCompetitor, createCompanyFactorScore, createNextBigThingOption, createReport } from "@/lib/services/db-service";
 import { formatDate } from "@/lib/utils/date";
-import { summaryService, analysisService, strategyService, AI_MODELS, type ModelType } from "@/lib/services/ai-service";
+import { summaryService, analysisService, strategyService, AIService, AI_MODELS, type ModelType } from "@/lib/services/ai-service";
 import { BusinessResearchSchema, CompetitorDiscoverySchema, NormalizedCompetitorSchema, AnalysisFactorSchema, CompanyScoreResultSchema, StrategyCanvasSchema, NextBigThingStrategySchema, NextBigThingResultSchema, StrategyReport, ReportSchema } from "@/lib/services/ai-service";
 import { scrapeWebsite, scrapeCompetitors, formatCompetitorInsights } from "@/lib/services/scraper-service";
 import { aggregateReviews, getCompetitorReviewInsights, formatReviewsForPrompt } from "@/lib/services/review-aggregation-service";
@@ -330,9 +330,11 @@ async function processCompetitorDiscovery(projectId: number, project: any, previ
   const prompt = `For the business: ${projectDetails}
 
   **CRITICAL: The description/notes above define exactly what this business is. Find competitors that compete with THIS SPECIFIC BUSINESS, not generic industry players.**
-  
+
   **IMPORTANT: If the description says "mens clothing store", look for other MENS CLOTHING stores. NOT pet stores, not women's clothing, not general fashion.**
-  
+
+  **EVEN MORE IMPORTANT: You MUST find and return the actual website URL for each competitor. Do NOT leave websiteUrl blank. If you cannot find a competitor's website, search for it by name. Every competitor MUST have a valid website URL starting with http:// or https://.**
+
   Identify key competitors that DIRECTLY compete with this specific business model, product offering, and target market.
   Find competitors that are similar in:
   - Product type and style
@@ -340,12 +342,14 @@ async function processCompetitorDiscovery(projectId: number, project: any, previ
   - Target customer demographic
   - Business model (D2C, subscription, etc.)
 
-  Research and return:
-  - List of 8-12 main competitors with names, descriptions, website URLs
-  - Market size and growth rate estimates
-  - Market trends
+  For each competitor, research and return:
+  - Name
+  - Description (2-3 sentences)
+  - **Website URL** (required - this is critical)
+  - Revenue estimate if available
+  - Market share if available
 
-  Return JSON with a "competitors" array and market data.`;
+  Return JSON with a "competitors" array. Every competitor object MUST have a "websiteUrl" field with a valid URL. If you cannot find a website, use your knowledge to construct the most likely domain (e.g., for "Brand Name" try "brandname.com").`;
 
   const { content } = await summaryService.generateResponse([
     { role: "system", content: "You are a market research analyst. Identify competitors in JSON format. Always respond with valid JSON only." },
@@ -353,7 +357,7 @@ async function processCompetitorDiscovery(projectId: number, project: any, previ
   ], 0.3, 4000, "summary");
 
   const result = JSON.parse(content);
-  
+
   // Save competitors and companies to the database
   const db = getDb();
   
@@ -410,12 +414,63 @@ async function processCompetitorDiscovery(projectId: number, project: any, previ
 
 async function processCompetitorNormalization(projectId: number, project: any, previousData: any): Promise<any> {
   // Normalize competitors to a standard format
-  const competitors = previousData?.competitors || [];
-  
-  // Update existing competitors in the database
-  const db = getDb();
+  // ONLY include competitors that have a valid websiteUrl — no URL means not a valid competitor
+  let competitors = (previousData?.competitors || []).filter(
+    (c: any) => c.websiteUrl && c.websiteUrl.startsWith("http")
+  );
+
+  // If we don't have 6 competitors with URLs, fetch more
+  const allCompetitorNames = new Set<string>();
+  for (const c of competitors) {
+    allCompetitorNames.add(c.name);
+  }
+
+  let maxAttempts = 5;
+  while (competitors.length < 6 && maxAttempts > 0) {
+    maxAttempts--;
+    console.log(`=== COMPETITOR NORMALIZATION: Have ${competitors.length} with URLs, need ${6 - competitors.length} more — fetching more ===`);
+
+    const prompt = `For the business: ${project.name} (${project.notes || project.category || "no description"})
+
+You already know about: ${Array.from(allCompetitorNames).join(", ")}
+
+Find ${6 - competitors.length} MORE direct competitors that have publicly accessible websites.
+Each competitor MUST have:
+- A real, working website URL (we will scrape it — no URL means the competitor is excluded)
+- A description of what they sell
+- Direct competition with the business above
+
+Return a JSON "competitors" array with: name, description, websiteUrl
+Do NOT repeat any competitor already listed above.`;
+
+    const { content } = await summaryService.generateResponse([
+      { role: "system", content: "You are a market research analyst. Identify competitors in JSON format. Always respond with valid JSON only." },
+      { role: "user", content: prompt },
+    ], 0.3, 3000, "summary");
+
+    try {
+      const result = JSON.parse(content);
+      for (const c of result.competitors || []) {
+        if (
+          c.websiteUrl && c.websiteUrl.startsWith("http") &&
+          !allCompetitorNames.has(c.name)
+        ) {
+          allCompetitorNames.add(c.name);
+          competitors.push(c);
+        }
+      }
+    } catch (e) {
+      console.error("=== COMPETITOR NORMALIZATION: Failed to parse extra competitors ===", e);
+    }
+  }
+
+  if (competitors.length < 6) {
+    console.warn(`=== COMPETITOR NORMALIZATION: Only found ${competitors.length} competitors with valid URLs — proceeding anyway ===`);
+  }
+
   const normalized = [];
-  
+  const db = getDb();
+
   for (const competitor of competitors) {
     // Try to find existing competitor by name
     const existingCompetitor = await db.select().from(schema.competitors).where(
@@ -424,9 +479,9 @@ async function processCompetitorNormalization(projectId: number, project: any, p
         eq(schema.competitors.name, competitor.name)
       )
     ).limit(1).then(rows => rows[0]);
-    
+
     let companyId: number;
-    
+
     if (existingCompetitor) {
       // Update existing competitor
       await db.update(schema.competitors).set({
@@ -435,7 +490,7 @@ async function processCompetitorNormalization(projectId: number, project: any, p
         revenueEstimate: competitor.revenueEstimate || existingCompetitor.revenueEstimate,
         marketShare: competitor.marketShare || existingCompetitor.marketShare,
       }).where(eq(schema.competitors.id, existingCompetitor.id));
-      
+
       companyId = existingCompetitor.id;
       normalized.push({
         ...existingCompetitor,
@@ -448,22 +503,22 @@ async function processCompetitorNormalization(projectId: number, project: any, p
         projectId,
         name: competitor.name || "Unknown",
         description: competitor.description || "",
-        websiteUrl:  competitor.websiteUrl || "",
+        websiteUrl: competitor.websiteUrl || "",
         revenueEstimate: competitor.revenueEstimate || null,
         marketShare: competitor.marketShare || null,
       }).returning();
-      
+
       if (!newCompetitor) {
         throw new Error(`Failed to insert competitor: ${competitor.name || "Unknown"}`);
       }
-      
+
       companyId = newCompetitor.id;
       normalized.push({
         id: newCompetitor.id,
         ...competitor,
       });
     }
-    
+
     // Also create or update company record for the canvas
     const existingCompany = await db.select().from(schema.companies).where(
       and(
@@ -471,7 +526,7 @@ async function processCompetitorNormalization(projectId: number, project: any, p
         eq(schema.companies.name, competitor.name || "Unknown")
       )
     ).limit(1).then(rows => rows[0]);
-    
+
     if (!existingCompany) {
       await db.insert(schema.companies).values({
         projectId,
@@ -552,18 +607,108 @@ ${project.category ? `Category: ${project.category}` : ''}
 ${project.region ? `Region: ${project.region}` : ''}
 `.trim();
 
+  // For competitors missing URLs, try to construct a likely domain and scrape
+  for (const competitor of topCompetitors) {
+    if (!competitor.websiteUrl) {
+      const name = competitor.name || "";
+      // Try common domain patterns
+      const variations = [
+        name.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 20) + ".com",
+        name.toLowerCase().replace(/\s+/g, "") + ".com",
+        name.toLowerCase().replace(/[^a-z0-9]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "") + ".com",
+      ];
+      for (const url of variations) {
+        try {
+          const result = await scrapeWebsite(`https://${url}`, competitor.name, businessContext);
+          if (result.success) {
+            competitor.websiteUrl = `https://${url}`;
+            console.log(`=== DEEP COMPETITOR RESEARCH: Found URL for ${competitor.name}: ${competitor.websiteUrl} ===`);
+            break;
+          }
+        } catch {
+          // Try next variation
+        }
+      }
+      // If still no URL, use the name to try one more scrape with just the domain
+      if (!competitor.websiteUrl) {
+        try {
+          const guessedUrl = `https://${name.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 20)}.com`;
+          const result = await scrapeWebsite(guessedUrl, competitor.name, businessContext);
+          if (result.success) {
+            competitor.websiteUrl = guessedUrl;
+          }
+        } catch {
+          // Could not find URL
+        }
+      }
+    }
+  }
+
   try {
     const results = await scrapeCompetitors(topCompetitors, businessContext);
     const competitorInsights = formatCompetitorInsights(results);
-    
+
+    // Update competitors in DB with discovered URLs from scraping
+    for (const competitor of topCompetitors) {
+      if (competitor.websiteUrl) {
+        const result = results.get(competitor.name);
+        if (result?.success) {
+          const aiTitle = result.content.title;
+          // Try to extract or construct URL from the scrape result
+          // The scrape always uses the competitor.websiteUrl we passed, but the AI title might give us the real domain
+          await db.update(schema.competitors).set({
+            websiteUrl: competitor.websiteUrl,
+            description: result.content.description || competitor.description || "",
+          }).where(
+            and(
+              eq(schema.competitors.projectId, projectId),
+              eq(schema.competitors.name, competitor.name)
+            )
+          );
+          // Also update the company record for canvas
+          await db.update(schema.companies).set({
+            websiteUrl: competitor.websiteUrl,
+            description: result.content.description || competitor.description || "",
+          }).where(
+            and(
+              eq(schema.companies.projectId, projectId),
+              eq(schema.companies.name, competitor.name)
+            )
+          );
+        }
+      } else {
+        // No URL was provided, try to derive it from the scrape result content
+        const result = results.get(competitor.name);
+        if (result?.success) {
+          const desc = result.content.description || competitor.description || "";
+          await db.update(schema.competitors).set({
+            description: desc,
+          }).where(
+            and(
+              eq(schema.competitors.projectId, projectId),
+              eq(schema.competitors.name, competitor.name)
+            )
+          );
+          await db.update(schema.companies).set({
+            description: desc,
+          }).where(
+            and(
+              eq(schema.companies.projectId, projectId),
+              eq(schema.companies.name, competitor.name)
+            )
+          );
+        }
+      }
+    }
+
     // Store detailed results
     const competitorResearch: Record<string, any> = {};
     for (const [name, result] of Array.from(results)) {
       competitorResearch[name] = result.content;
     }
-    
+
     console.log("=== DEEP COMPETITOR RESEARCH: Completed for", topCompetitors.length, "competitors ===");
-    
+
     return {
       ...previousData,
       competitorResearch,
@@ -1140,50 +1285,26 @@ Operational Implications: ${s.operationalImplications || 'Not specified'}
 
   const competitorsText = competitors.length > 0 ? competitors.map((c: any) => `- ${c.name || 'Unknown'}: ${c.description || 'Description not available'}`).join('\n') : 'No competitor data available';
 
-  const prompt = `You are creating a comprehensive strategic analysis report for "${project.name}".
+  const prompt = `Create a strategic analysis report for "${project.name}" based on comprehensive research:
 
-═══════════════════════════════════════════════════════════════
-THIS DATA WAS JUST GATHERED FROM EXTENSIVE REAL-TIME RESEARCH
-═══════════════════════════════════════════════════════════════
-DO NOT say "insufficient data" - SYNTHESIZE what you have!
+**RESEARCH SUMMARY:**
+- Company: ${mainResearch.description || businessResearch.summary || project.name}
+- Market: ${mainResearch.targetMarket || businessResearch.targetMarket || 'N/A'}
+- Key Strengths: ${[...(mainResearch.strengths || []), ...(businessResearch.keyStrengths || [])].slice(0, 3).join(", ")}
+- Key Weaknesses: ${[...(mainResearch.weaknesses || []), ...(businessResearch.keyWeaknesses || [])].slice(0, 3).join(", ")}
+- Competitors: ${competitors.slice(0, 3).map((c: any) => c.name).join(", ")}
+- Customer Sentiment: ${previousData?.mainReviewsText ? 'Available' : 'Not available'}
+- Strategic Options: ${strategies.length} options developed
 
-**1. YOUR MAIN COMPANY DEEP RESEARCH:**
-${mainResearch.description || 'No deep research available'}
-Target Market: ${mainResearch.targetMarket || 'N/A'}
-Price Range: ${mainResearch.pricing || 'N/A'}
-Main Products: ${(mainResearch.mainProducts || []).join(", ") || 'N/A'}
-Brand Story: ${mainResearch.brandStory || 'N/A'}
-Strengths from deep research: ${(mainResearch.strengths || []).join(", ") || 'N/A'}
-Weaknesses from deep research: ${(mainResearch.weaknesses || []).join(", ") || 'N/A'}
 
-**2. COMPETITOR DEEP ANALYSIS:**
-${competitorInsights || 'No competitor analysis available'}
+**TASK:** Synthesize this research into a comprehensive strategic report with:
+- Executive summary
+- Current positioning analysis
+- Competitor comparison
+- Strategic recommendations
+- Implementation guidance
 
-**3. CUSTOMER REVIEWS & SENTIMENT:**
-${previousData?.mainReviewsText || 'No review data available'}
-
-**4. BUSINESS ANALYSIS (Traditional):**
-${businessResearch.summary || 'Business summary not available'}
-- Strengths: ${(businessResearch.keyStrengths || []).join("; ") || 'Not specified'}
-- Weaknesses: ${(businessResearch.keyWeaknesses || []).join("; ") || 'Not specified'}
-- Market Position: ${businessResearch.marketPosition || 'Position not specified'}
-- Unique Value Proposition: ${businessResearch.uniqueValueProposition || 'UVP not specified'}
-- Target Market: ${businessResearch.targetMarket || 'Target market not specified'}
-
-**5. COMPETITORS IDENTIFIED:**
-${competitorsText}
-
-**6. COMPANY SCORES ANALYSIS:**
-${scoresText}
-
-**7. STRATEGIC OPTIONS DEVELOPED:**
-${strategiesText}
-
-═══════════════════════════════════════════════════════════════
-TASK: Synthesize ALL the above information into a comprehensive strategic analysis report. Extract key findings, identify patterns, compare against competitor strategies, and provide actionable recommendations.
-═══════════════════════════════════════════════════════════════
-
-Return a comprehensive report with this JSON structure:
+Return JSON with:
 {
   "title": "Strategic Analysis Report for [Company Name]",
   "executiveSummary": "2-3 sentence executive summary of the analysis and key recommendation",
@@ -1213,16 +1334,30 @@ Return ONLY valid JSON, no additional text.`;
   let content: string;
   let result: any;
   
-  try {
-    const response = await strategyService.generateResponse([
-      { role: "system", content: "You are a strategic analysis report writer. Synthesize all provided research into a comprehensive, actionable strategic report. Be analytical yet creative in your synthesis. Identify patterns and insights across all data sources. Always respond with valid JSON only." },
-      { role: "user", content: prompt },
-    ], 0.75, 6000, "strategy");
-    content = response.content;
-    result = JSON.parse(content);
-  } catch (error) {
-    console.error("AI generation failed for report assembly:", error);
-    // Build a report from available data if AI fails - include ALL deep research
+  const MAX_RETRIES = 2;
+  let retryCount = 0;
+  
+  while (retryCount <= MAX_RETRIES) {
+    try {
+      // Create a custom AI service instance with extended timeout for report assembly
+      const reportAIService = new AIService();
+      reportAIService.requestTimeoutMs = 90000; // 90 seconds for report assembly
+      
+      const response = await reportAIService.generateResponse([
+        { role: "system", content: "You are a strategic analysis report writer. Synthesize all provided research into a comprehensive, actionable strategic report. Be analytical yet creative in your synthesis. Identify patterns and insights across all data sources. Always respond with valid JSON only." },
+        { role: "user", content: prompt },
+      ], 0.75, 6000, "strategy");
+      content = response.content;
+      result = JSON.parse(content);
+      break; // Success, exit retry loop
+    } catch (error) {
+      retryCount++;
+      console.error(`AI generation failed for report assembly (attempt ${retryCount}/${MAX_RETRIES}):`, error);
+      
+      if (retryCount > MAX_RETRIES) {
+        // Final attempt failed, use fallback
+        console.log("All retry attempts failed, using fallback report generation");
+        // Build a report from available data if AI fails - include ALL deep research
     const mainCompany = {
       name: project.name,
       description: mainResearch?.description || businessResearch?.summary || `Strategic analysis for ${project.name}`,

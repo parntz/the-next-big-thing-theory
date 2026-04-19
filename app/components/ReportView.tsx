@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { pdf } from "@react-pdf/renderer";
+import { ReportPdf } from "./ReportPdf";
 
 interface Report {
   id: number;
@@ -37,6 +39,7 @@ interface ReportViewProps {
 export function ReportView({ projectId }: ReportViewProps) {
   const [report, setReport] = useState<Report | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isPdfLoading, setIsPdfLoading] = useState(false);
 
   useEffect(() => {
     const fetchReport = async () => {
@@ -55,6 +58,26 @@ export function ReportView({ projectId }: ReportViewProps) {
 
     fetchReport();
   }, [projectId]);
+
+  const handleDownloadPdf = async () => {
+    if (!report) return;
+    setIsPdfLoading(true);
+    try {
+      const blob = await pdf(<ReportPdf report={report} />).toBlob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${report.title.replace(/[^a-z0-9]/gi, "_")}_report.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("PDF generation failed:", err);
+    } finally {
+      setIsPdfLoading(false);
+    }
+  };
 
   if (isLoading) {
     return (
@@ -83,9 +106,25 @@ export function ReportView({ projectId }: ReportViewProps) {
       <div className="bg-gradient-to-r from-blue-600 to-blue-800 text-white p-8 rounded-xl">
         <div className="flex items-center justify-between mb-4">
           <span className="text-blue-200 text-sm">Strategic Analysis Report</span>
-          <span className="text-sm bg-white/20 px-3 py-1 rounded-full">
-            Confidence: {Math.round(report.confidenceScore * 100)}%
-          </span>
+          <div className="flex items-center gap-3">
+            <span className="text-sm bg-white/20 px-3 py-1 rounded-full">
+              Confidence: {Math.round(report.confidenceScore * 100)}%
+            </span>
+            <button
+              onClick={handleDownloadPdf}
+              disabled={isPdfLoading}
+              className="text-sm bg-white/20 hover:bg-white/30 disabled:opacity-50 px-4 py-1 rounded-full flex items-center gap-2 transition-colors"
+            >
+              {isPdfLoading ? (
+                <span className="animate-spin inline-block h-3 w-3 border-b-2 border-white rounded-full" />
+              ) : (
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+              )}
+              {isPdfLoading ? "Generating..." : "Download PDF"}
+            </button>
+          </div>
         </div>
         <h2 className="text-3xl font-bold mb-2">{report.title}</h2>
         <p className="text-blue-100">{report.executiveSummary}</p>
