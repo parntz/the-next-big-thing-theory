@@ -111,6 +111,8 @@ export default function ProjectPage({ params }: { params: { id: string } }) {
         setCurrentStage(STAGE_LABELS[currentStageKey]);
         setAnalysisProgress(Math.round((stageIndex / ANALYSIS_STAGES.length) * 100));
         
+        console.log(`Starting analysis stage: ${currentStageKey}`);
+        
         const response = await fetch(`/api/projects/${projectId}/analyze`, {
           method: "POST",
           headers: {
@@ -120,12 +122,13 @@ export default function ProjectPage({ params }: { params: { id: string } }) {
         });
 
         if (!response.ok) {
-          const errorData = await response.json();
-          console.error("Analysis error:", errorData);
-          break;
+          const errorText = await response.text();
+          console.error("Analysis error:", response.status, errorText);
+          throw new Error(`Analysis failed: ${response.status} ${errorText}`);
         }
 
         const data = await response.json();
+        console.log(`Stage ${currentStageKey} completed:`, data);
         
         setAnalysisRuns(prev => [...prev, data]);
 
@@ -146,6 +149,8 @@ export default function ProjectPage({ params }: { params: { id: string } }) {
       setAnalysisRefreshKey(prev => prev + 1);
     } catch (error) {
       console.error("Error starting analysis:", error);
+      // Show error message to user
+      setCurrentStage(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setTimeout(() => {
         setIsAnalyzing(false);
