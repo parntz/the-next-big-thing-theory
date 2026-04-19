@@ -6,12 +6,17 @@ import { getProject, createAnalysisRun, updateAnalysisRun, getCompaniesByProject
 import { formatDate } from "@/lib/utils/date";
 import { analysisService } from "@/lib/services/ai-service";
 import { BusinessResearchSchema, CompetitorDiscoverySchema, NormalizedCompetitorSchema, AnalysisFactorSchema, CompanyScoreResultSchema, StrategyCanvasSchema, NextBigThingStrategySchema, NextBigThingResultSchema, StrategyReport, ReportSchema } from "@/lib/services/ai-service";
+import { scrapeWebsite, scrapeCompetitors, formatCompetitorInsights } from "@/lib/services/scraper-service";
+import { aggregateReviews, getCompetitorReviewInsights, formatReviewsForPrompt } from "@/lib/services/review-aggregation-service";
 
-// Analysis stages
+// Analysis stages - extended with deep research
 type AnalysisStage = 
   | "business_research"
   | "competitor_discovery"
   | "competitor_normalization"
+  | "deep_main_research"        // NEW: Deep dive on main company
+  | "deep_competitor_research"  // NEW: Deep dive on competitors
+  | "review_aggregation"        // NEW: Aggregate reviews from multiple sources
   | "factor_generation"
   | "company_scoring"
   | "strategy_canvas"
@@ -99,6 +104,24 @@ export async function POST(
 
         case "competitor_normalization":
           resultData = await processCompetitorNormalization(id, project, analysisRun.inputData);
+          nextStage = "deep_main_research";
+          break;
+
+        case "deep_main_research":
+          console.log("=== STAGE: Deep Main Website Research ===");
+          resultData = await processDeepMainResearch(id, project, analysisRun.inputData);
+          nextStage = "deep_competitor_research";
+          break;
+
+        case "deep_competitor_research":
+          console.log("=== STAGE: Deep Competitor Website Research ===");
+          resultData = await processDeepCompetitorResearch(id, project, analysisRun.inputData);
+          nextStage = "review_aggregation";
+          break;
+
+        case "review_aggregation":
+          console.log("=== STAGE: Review Aggregation ===");
+          resultData = await processReviewAggregation(id, project, analysisRun.inputData);
           nextStage = "factor_generation";
           break;
 
@@ -251,17 +274,33 @@ export async function GET(
 // ============ Analysis Processing Functions ============
 
 async function processBusinessResearch(projectId: number, project: any, previousData: any): Promise<any> {
-  const prompt = `Analyze the business for: ${project.name} (${project.websiteUrl})
+  const projectContext = [
+    `Business Name: ${project.name}`,
+    `Website: ${project.websiteUrl}`,
+    project.category && `Category: ${project.category}`,
+    project.notes && `User-provided Description/Notes: ${project.notes}`,
+    project.region && `Region: ${project.region}`,
+  ].filter(Boolean).join('\n');
+
+  const prompt = `Analyze this business. This is the user's own description of their business - believe it completely:
   
-  Provide business research including:
-  - Brief summary of the business
-  - Key strengths and weaknesses
-  - Market position
-  - Unique value proposition
+${projectContext}
+
+**CRITICAL INSTRUCTIONS:**
+1. The "User-provided Description/Notes" is the GROUND TRUTH for what this business is. Follow it exactly.
+2. Do NOT make assumptions or add information not provided by the user.
+3. If the description says it's a mens clothing store, it is a mens clothing store - NOT a pet store, not a pet apparel store, etc.
+4. Your analysis must be consistent with and derived entirely from the user's description.
+
+Provide business research including:
+  - Brief summary of the business (based entirely on user's description)
+  - Key strengths and weaknesses (based on user's stated goals)
+  - Market position (where this business fits vs competitors)
+  - Unique value proposition (what makes it stand out per user's description)
   - Revenue model
   - Target market
 
-  Return JSON with keys: summary, keyStrengths, keyWeaknesses, marketPosition, uniqueValueProposition, revenueModel, targetMarket.`;
+Return JSON with keys: summary, keyStrengths, keyWeaknesses, marketPosition, uniqueValueProposition, revenueModel, targetMarket.`;
 
   const { content } = await analysisService.generateResponse([
     { role: "system", content: "You are a business analyst. Provide detailed business research in JSON format." },
@@ -276,14 +315,33 @@ async function processBusinessResearch(projectId: number, project: any, previous
     updatedAt: new Date(),
   }).where(eq(schema.projects.id, projectId));
 
-  return result;
+  return { ...result, ...previousData };
 }
 
 async function processCompetitorDiscovery(projectId: number, project: any, previousData: any): Promise<any> {
-  const prompt = `For the business "${project.name}" in category "${project.category || 'general'}", identify key competitors.
+  // Include project details - especially notes/description which contains user's context
+  const projectDetails = [
+    project.name,
+    project.category && `Category: ${project.category}`,
+    project.notes && `Description/Notes: ${project.notes}`,
+    project.region && `Region: ${project.region}`,
+  ].filter(Boolean).join(' - ');
+
+  const prompt = `For the business: ${projectDetails}
+
+  **CRITICAL: The description/notes above define exactly what this business is. Find competitors that compete with THIS SPECIFIC BUSINESS, not generic industry players.**
+  
+  **IMPORTANT: If the description says "mens clothing store", look for other MENS CLOTHING stores. NOT pet stores, not women's clothing, not general fashion.**
+  
+  Identify key competitors that DIRECTLY compete with this specific business model, product offering, and target market.
+  Find competitors that are similar in:
+  - Product type and style
+  - Price point and positioning
+  - Target customer demographic
+  - Business model (D2C, subscription, etc.)
 
   Research and return:
-  - List of main competitors with names, descriptions, website URLs
+  - List of 8-12 main competitors with names, descriptions, website URLs
   - Market size and growth rate estimates
   - Market trends
 
@@ -347,7 +405,7 @@ async function processCompetitorDiscovery(projectId: number, project: any, previ
     }
   }
 
-  return result;
+  return { ...result, ...previousData };
 }
 
 async function processCompetitorNormalization(projectId: number, project: any, previousData: any): Promise<any> {
@@ -421,10 +479,158 @@ async function processCompetitorNormalization(projectId: number, project: any, p
     }
   }
 
-  return { competitors: normalized };
+  return { ...previousData, competitors: normalized };
+}
+
+// ========== NEW DEEP RESEARCH STAGES ==========
+
+async function processDeepMainResearch(projectId: number, project: any, previousData: any): Promise<any> {
+  console.log("=== DEEP MAIN RESEARCH: Starting deep dive into", project.name, "website ===");
+
+  const websiteUrl = project.websiteUrl || `https://${project.name.toLowerCase().replace(/\s+/g, '')}.com`;
+
+  // Build context to ensure AI understands what this business IS
+  const businessContext = `
+BUSINESS DESCRIPTION (from user - this is ground truth):
+${project.notes || 'No description provided.'}
+${project.category ? `Category: ${project.category}` : ''}
+${project.region ? `Region: ${project.region}` : ''}
+`.trim();
+
+  try {
+    const result = await scrapeWebsite(websiteUrl, project.name, businessContext);
+    
+    if (result.success) {
+      console.log("=== DEEP MAIN RESEARCH: Completed for", project.name, "===");
+      return {
+        ...previousData,
+        mainResearch: result.content,
+        mainResearchSuccess: true
+      };
+    } else {
+      console.warn("=== DEEP MAIN RESEARCH: Failed for", project.name, "===");
+      return {
+        ...previousData,
+        mainResearch: result.content,
+        mainResearchSuccess: false,
+        mainResearchError: result.error
+      };
+    }
+  } catch (error) {
+    console.error("=== DEEP MAIN RESEARCH: Error:", error);
+    return {
+      ...previousData,
+      mainResearchSuccess: false,
+      mainResearchError: error instanceof Error ? error.message : "Unknown error"
+    };
+  }
+}
+
+async function processDeepCompetitorResearch(projectId: number, project: any, previousData: any): Promise<any> {
+  console.log("=== DEEP COMPETITOR RESEARCH: Starting deep dive into competitor websites ===");
+
+  const competitors = previousData?.competitors || [];
+  const topCompetitors = competitors.slice(0, 6); // Limit to top 6
+
+  if (topCompetitors.length === 0) {
+    console.log("=== DEEP COMPETITOR RESEARCH: No competitors found, skipping ===");
+    return {
+      ...previousData,
+      competitorResearchSuccess: false
+    };
+  }
+
+  // Build context to help AI understand the target business when analyzing competitors
+  const businessContext = `
+BUSINESS DESCRIPTION (from user - this is ground truth):
+${project.notes || 'No description provided.'}
+${project.category ? `Category: ${project.category}` : ''}
+${project.region ? `Region: ${project.region}` : ''}
+`.trim();
+
+  try {
+    const results = await scrapeCompetitors(topCompetitors, businessContext);
+    const competitorInsights = formatCompetitorInsights(results);
+    
+    // Store detailed results
+    const competitorResearch: Record<string, any> = {};
+    for (const [name, result] of results) {
+      competitorResearch[name] = result.content;
+    }
+    
+    console.log("=== DEEP COMPETITOR RESEARCH: Completed for", topCompetitors.length, "competitors ===");
+    
+    return {
+      ...previousData,
+      competitorResearch,
+      competitorInsights,
+      competitorResearchSuccess: true
+    };
+  } catch (error) {
+    console.error("=== DEEP COMPETITOR RESEARCH: Error:", error);
+    return {
+      ...previousData,
+      competitorResearchSuccess: false,
+      competitorResearchError: error instanceof Error ? error.message : "Unknown error"
+    };
+  }
+}
+
+async function processReviewAggregation(projectId: number, project: any, previousData: any): Promise<any> {
+  console.log("=== REVIEW AGGREGATION: Starting to gather reviews from multiple sources ===");
+  
+  const competitors = previousData?.competitors || [];
+  const mainCompanyName = project.name;
+  const mainWebsiteUrl = project.websiteUrl;
+  
+  try {
+    // Get reviews for main company
+    const mainReviews = await aggregateReviews(mainCompanyName, mainWebsiteUrl);
+    console.log("=== REVIEW AGGREGATION: Found", mainReviews.reviews.length, "reviews for main company ===");
+    
+    // Get reviews for top competitors
+    const competitorReviewResults = await getCompetitorReviewInsights(competitors.slice(0, 6));
+    
+    // Store reviews by company
+    const allReviews: Record<string, any> = {
+      [mainCompanyName]: {
+        reviews: mainReviews.reviews,
+        rating: mainReviews.aggregatedRating,
+        summary: mainReviews.summary
+      }
+    };
+    
+    for (const [name, result] of competitorReviewResults) {
+      allReviews[name] = {
+        reviews: result.reviews,
+        rating: result.aggregatedRating,
+        summary: result.summary
+      };
+    }
+    
+    // Format for analysis
+    const mainReviewsText = formatReviewsForPrompt(mainReviews.reviews, mainCompanyName);
+    
+    console.log("=== REVIEW AGGREGATION: Completed ===");
+    
+    return {
+      ...previousData,
+      reviews: allReviews,
+      mainReviewsText,
+      reviewAggregationSuccess: mainReviews.success
+    };
+  } catch (error) {
+    console.error("=== REVIEW AGGREGATION: Error:", error);
+    return {
+      ...previousData,
+      reviewAggregationSuccess: false
+    };
+  }
 }
 
 async function processFactorGeneration(projectId: number, project: any, previousData: any): Promise<any> {
+  console.log("processFactorGeneration called, previousData keys:", previousData ? Object.keys(previousData) : "null");
+  
   const prompt = `Based on the business research and competitors for "${project.name}", identify key factors that customers use to compare providers in this industry.
 
   Suggest 5-8 factors that are important in this market.
@@ -457,32 +663,57 @@ async function processFactorGeneration(projectId: number, project: any, previous
     savedFactors.push(newFactor);
   }
 
-  return { ...result, factors: savedFactors, competitors: previousData.competitors };
+  console.log("  processFactorGeneration returning factors:", savedFactors.length);
+  return { ...result, ...previousData, factors: savedFactors };
 }
 
 async function processCompanyScoring(projectId: number, project: any, previousData: any): Promise<any> {
+  console.log("processCompanyScoring called, previousData keys:", previousData ? Object.keys(previousData) : "null");
   const factors = previousData?.factors || [];
   const competitors = previousData?.competitors || [];
   
-  console.log("processCompanyScoring called:");
   console.log("  factors count:", factors.length);
+  console.log("  factors structure check - is array:", Array.isArray(factors), "is factors[0] array:", Array.isArray(factors[0]));
+  console.log("  factors[0]:", JSON.stringify(factors[0]));
   console.log("  competitors count:", competitors.length);
-  console.log("  factors[0]:", factors[0]);
-  console.log("  competitors[0]:", competitors[0]);
+  console.log("  competitors[0]:", JSON.stringify(competitors[0]));
   
-  const prompt = `Score each competitor on each factor for "${project.name}":
+  // Handle potential nested array structure - keep flattening until we get actual objects
+  let factorsList = factors;
+  while (factorsList.length > 0 && Array.isArray(factorsList[0])) {
+    factorsList = factorsList.flat();
+  }
+  // If still not an array of objects, try another approach
+  if (factorsList.length > 0 && typeof factorsList[0] !== 'object') {
+    factorsList = [];
+  }
+  console.log("  factorsList (after flatten):", factorsList.length, factorsList[0] ? 'has items' : 'empty');
+  // Limit to top 6 competitors
+  const topCompetitors = competitors.slice(0, 6);
+  // Include the main company in scoring
+  const allCompaniesToScore = [{ name: project.name, isMain: true }, ...topCompetitors.map(c => ({ name: c.name, isMain: false }))];
   
-  Factors: ${factors.map((f: any) => f.name).join(", ")}
-  Competitors: ${competitors.map((c: any) => c.name).join(", ")}
+  const prompt = `Score the following companies on each factor for "${project.name}":
   
-  For each competitor, provide scores (0-10) for each factor with confidence levels and evidence.
+  Factors: ${factorsList.map((f: any) => f.name).join(", ")}
+  Companies: ${allCompaniesToScore.map((c: any) => c.name).join(", ")}
+  
+  For each company, provide scores (0-10) for each factor with confidence levels and evidence.
   
   Return JSON with "scores" array containing company scores.`;
+
+  console.log("  Prompt factors list:", factors.map((f: any) => f.name).join(", "));
+  console.log("  Prompt competitors list:", competitors.map((c: any) => c.name).join(", "));
 
   let content: string;
   let result: any;
   const db = getDb();
-  
+
+  // Get all companies for this project for name-based matching
+  const companies = await db.select().from(schema.companies).where(
+    eq(schema.companies.projectId, projectId)
+  );
+
   try {
     const response = await analysisService.generateResponse([
       { role: "system", content: "You are a data analyst. Provide scores in JSON format." },
@@ -493,79 +724,117 @@ async function processCompanyScoring(projectId: number, project: any, previousDa
     result = JSON.parse(content);
     console.log("  AI scoring succeeded, result keys:", Object.keys(result));
     console.log("  result.scores?.length:", result.scores?.length);
+    console.log("  First score result keys:", result.scores?.[0] ? Object.keys(result.scores[0]) : 'none');
+    console.log("  Score result sample:", JSON.stringify(result.scores?.[0]).substring(0, 200));
   } catch (error) {
     console.error("AI generation/scoring failed for company scoring:", error);
-    // Generate and save dummy scores so the pipeline can continue
-    return await generateAndSaveDummyScores(projectId, factors, competitors, db);
+    // Generate and save dummy scores so the pipeline can continue - include all previous data
+    const dummyResult = await generateAndSaveDummyScores(projectId, factors, competitors, db);
+    return { ...previousData, scores: dummyResult.scores };
   }
   
   // Save scores to the database
   const savedScores = [];
-  
+
   console.log("  Saving scores, result.scores:", result.scores?.length);
-  
-  // Use index-based matching since AI uses generic factor names
+
+  // Build a map of company names to company records for fast lookup
+  const companyMap = new Map(companies.map(c => [c.name, c]));
+  console.log("    DB companies map size:", companyMap.size);
+
   for (let i = 0; i < result.scores?.length; i++) {
     const scoreResult = result.scores[i];
-    const companyName = scoreResult.companyName || `Company ${i + 1}`;
+    const companyName = scoreResult.company || scoreResult.companyName || `Company ${i + 1}`;
     console.log("    scoreResult company:", companyName);
+
+    // Match by company NAME since AI names match DB names
+    const company = companyMap.get(companyName);
+    if (!company) {
+      console.log("    company not found in DB:", companyName);
+      // Try to find partial match
+      const partialMatch = companies.find(c => c.name.includes(companyName) || companyName.includes(c.name));
+      if (partialMatch) {
+        console.log("    found partial match:", partialMatch.name);
+      }
+      continue;
+    }
+    console.log("    matched to DB company:", company.name);
+
+    // AI returns scores with factor names as keys directly on the object:
+    // { "company": "Name", "factor_name": { score, confidence, evidence }, ... }
+    // OR with nested factors/scores array
+    let scoreArray = scoreResult.scores || scoreResult.factors || [];
     
-    // Get scores as an array or object
-    const scoreEntries = Object.entries(scoreResult.scores || {});
+    // If still empty, extract all keys except "company" as factor scores
+    if (scoreArray.length === 0) {
+      const allKeys = Object.keys(scoreResult);
+      const factorKeys = allKeys.filter(k => k !== 'company');
+      scoreArray = factorKeys.map(key => {
+        const data = scoreResult[key];
+        return {
+          factor: key,
+          score: typeof data === 'object' ? data.score : data,
+          confidence: typeof data === 'object' ? data.confidence : 0.5,
+          evidence: typeof data === 'object' ? data.evidence : ""
+        };
+      });
+    } else if (typeof scoreArray === 'object' && !Array.isArray(scoreArray)) {
+      // If it's an object like { "factor": {...} }, convert to array
+      scoreArray = Object.entries(scoreArray).map(([factor, data]) => ({
+        factor,
+        ...(typeof data === 'object' ? data : { score: data })
+      }));
+    }
     
-    for (let j = 0; j < scoreEntries.length; j++) {
-      const [factorName, scoreData] = scoreEntries[j];
-      
-      // Use index-based matching since factor names may not match
-      const factor = factors[j];
+    console.log("    scoreArray length:", scoreArray.length);
+
+    // Use index-based factor matching
+    for (let j = 0; j < scoreArray.length; j++) {
+      const scoreEntry = scoreArray[j];
+      const factorName = scoreEntry.factor || `Factor ${j + 1}`;
+      const scoreData = scoreEntry.score;
+      // Handle confidence that might be "High"/"Medium"/"Low" or a number
+      let confidence = scoreEntry.confidence || 0.5;
+      if (typeof confidence === 'string') {
+        confidence = confidence === 'High' ? 0.8 : confidence === 'Medium' ? 0.5 : 0.3;
+      }
+      const explanation = scoreEntry.evidence || "Auto-scored";
+
+      // Use index-based factor matching since factor names may not match
+      const factor = factorsList[j];
       if (!factor) {
         console.log("      factor at index", j, "not found!");
         continue;
       }
-      
-      console.log("      factor:", factor.name, "index:", j);
-      
-      // Handle both numeric scores and object scores
-      const score = typeof scoreData === 'object' ? scoreData.score : scoreData;
-      const confidence = typeof scoreData === 'object' ? scoreData.confidence : 0.5;
-      const explanation = typeof scoreData === 'object' ? scoreData.explanation : "Auto-scored";
-      const evidence = typeof scoreData === 'object' ? scoreData.evidence : [];
-      
-      // Find the company by name in the companies table
-      const company = await db.select().from(schema.companies).where(
-        and(
-          eq(schema.companies.projectId, projectId),
-          eq(schema.companies.name, companyName)
-        )
-      ).limit(1).then(rows => rows[0]);
-      
-      console.log("      company:", company?.name, "found:", !!company);
-      
-      if (!company) continue;
-      
+
+      console.log("      inserting score for company:", company.name, "factor:", factor.name, "score:", scoreData);
+
       const newScore = await db.insert(schema.companyFactorScores).values({
         projectId,
         companyId: company.id,
         factorId: factor.id,
-        score: score,
+        score: scoreData,
         confidence: confidence,
         explanation: explanation || "",
-        evidence: JSON.stringify(evidence || []),
+        evidence: JSON.stringify([]),
         isMainCompany: company.isMainCompany,
       }).returning();
-      
+
       savedScores.push(newScore);
     }
   }
-  
+
   console.log("  Saved", savedScores.length, "scores");
 
-  return { ...result, scores: savedScores };
+  return { ...result, ...previousData, scores: savedScores };
 }
 
 async function generateAndSaveDummyScores(projectId: number, factors: any[], competitors: any[], db: any): Promise<any> {
+  // Handle nested array structure
+  const factorsList = factors.length > 0 && Array.isArray(factors[0]) ? factors.flat() : factors;
+  
   console.log("generateAndSaveDummyScores called:");
-  console.log("  factors count:", factors?.length);
+  console.log("  factors count:", factors?.length, "-> factorsList count:", factorsList?.length);
   console.log("  competitors count:", competitors?.length);
   
   // Get all companies for this project
@@ -581,8 +850,8 @@ async function generateAndSaveDummyScores(projectId: number, factors: any[], com
     console.log("    Processing company:", company.name);
     const companyScores: any = {};
     
-    for (let j = 0; j < factors?.length; j++) {
-      const factor = factors[j];
+    for (let j = 0; j < factorsList?.length; j++) {
+      const factor = factorsList[j];
       await db.insert(schema.companyFactorScores).values({
         projectId,
         companyId: company.id,
@@ -629,11 +898,70 @@ async function processStrategyCanvas(projectId: number, project: any, previousDa
 
   const result = JSON.parse(content);
 
-  return result;
+  return { ...result, ...previousData };
 }
 
 async function processNextBigThing(projectId: number, project: any, previousData: any): Promise<any> {
+  const businessResearch = previousData?.businessResearch || {};
+  const factors = previousData?.factors || [];
+  const factorsList = factors.length > 0 && Array.isArray(factors[0]) ? factors.flat() : factors;
+  const competitors = previousData?.competitors || [];
+  const scores = previousData?.scores || [];
+  const mainResearch = previousData?.mainResearch || {};
+  const competitorInsights = previousData?.competitorInsights || '';
+  const reviews = previousData?.reviews || {};
+  
+  // Use project notes heavily - it's the user's own description
+  const projectContext = [
+    `Business: ${project.name}`,
+    project.notes && `User Description: ${project.notes}`,
+    project.websiteUrl && `Website: ${project.websiteUrl}`,
+  ].filter(Boolean).join('\n');
+
   const prompt = `Create "Next Big Thing" strategy options for "${project.name}".
+  
+  ════════════════════════════════════════════════════════════════
+  CRITICAL BUSINESS CONTEXT (from user's description):
+  ════════════════════════════════════════════════════════════════
+  ${project.notes || 'No user description provided'}
+  
+  ════════════════════════════════════════════════════════════════
+  YOUR COMPLETE RESEARCH DATA
+  ════════════════════════════════════════════════════════════════
+  
+  **1. MAIN COMPANY DEEP RESEARCH:**
+  ${mainResearch.description || 'No deep research available'}
+  Target Market: ${mainResearch.targetMarket || 'N/A'}
+  Price Range: ${mainResearch.pricing || 'N/A'}
+  Main Products: ${(mainResearch.mainProducts || []).join(", ") || 'N/A'}
+  Unique Selling Points: ${(mainResearch.uniqueSellingPoints || []).join(", ") || 'N/A'}
+  Brand Story: ${mainResearch.brandStory || 'N/A'}
+  
+  **2. COMPETITOR DEEP ANALYSIS:**
+  ${competitorInsights || 'No competitor analysis available'}
+  
+  **3. BUSINESS ANALYSIS:**
+  - Summary: ${businessResearch.summary || 'N/A'}
+  - Key Strengths: ${(businessResearch.keyStrengths || []).join(", ")}
+  - Key Weaknesses: ${(businessResearch.keyWeaknesses || []).join(", ")}
+  - Market Position: ${businessResearch.marketPosition || 'N/A'}
+  - Unique Value Proposition: ${businessResearch.uniqueValueProposition || 'N/A'}
+  
+  **4. CUSTOMER REVIEWS & SENTIMENT:**
+  ${previousData?.mainReviewsText || 'No review data available'}
+  
+  **5. KEY FACTORS IN THIS MARKET:**
+  ${factorsList.map((f: any) => f.name).join(", ") || 'N/A'}
+  
+  ════════════════════════════════════════════════════════════════
+  TASK: Based on ALL the research above, create breakthrough strategy options
+  ════════════════════════════════════════════════════════════════
+  
+  The strategies should:
+  - Address the weaknesses shown in customer reviews
+  - Differentiate from what competitors are doing
+  - Leverage the company's unique strengths
+  - Help achieve the user's stated vision
   
   For each strategy option, provide:
   - A catchy title
@@ -664,8 +992,9 @@ async function processNextBigThing(projectId: number, project: any, previousData
     result = JSON.parse(content);
   } catch (error) {
     console.error("AI generation failed for next big thing:", error);
-    // Return dummy strategies so the pipeline can continue
+    // Return dummy strategies so the pipeline can continue - but include all previous data
     return {
+      ...previousData,
       strategies: [
         {
           title: "Premium Pet Fashion",
@@ -689,23 +1018,34 @@ async function processNextBigThing(projectId: number, project: any, previousData
   const db = getDb();
   const savedOptions = [];
   
-  for (const option of result.strategies || []) {
+  // AI may return either "strategies" or "strategy_options" - empty array is falsy, so check for non-empty
+  const strategyList = (result.strategy_options?.length > 0 ? result.strategy_options : null) ||
+                       (result.strategies?.length > 0 ? result.strategies : null) ||
+                       [];
+
+  // Helper to truncate arrays to prevent SQLite parameter limits
+  const truncateArray = (arr: any[], maxLen: number = 50) => {
+    if (!Array.isArray(arr)) return [];
+    return arr.slice(0, maxLen);
+  };
+
+  for (const option of strategyList) {
     try {
       const newOption = await db.insert(schema.nextBigThingOptions).values({
         projectId,
-        title: option.title || "Strategy Option",
-        summary: option.summary || "A strategic option for growth",
-        eliminate: option.eliminate || "",
-        reduce: option.reduce || "",
-        raise: option.raise || "",
-        create: option.create || "",
-        valueCurve: JSON.stringify(option.valueCurve || []),
-        targetCustomer: option.targetCustomer || "",
-        positioningStatement: option.positioningStatement || "",
-        risks: JSON.stringify(option.risks || []),
-        difficulty: option.difficulty || 5,
-        operationalImplications: option.operationalImplications || "",
-        revenuePotential: option.revenuePotential || null,
+        title: (option.title || option.Name || "Strategy Option").slice(0, 500),
+        summary: (option.summary || option.description || "A strategic option for growth").slice(0, 2000),
+        eliminate: (option.eliminate || option.eliminateWhat || "").slice(0, 1000),
+        reduce: (option.reduce || option.reduceWhat || "").slice(0, 1000),
+        raise: (option.raise || option.raiseWhat || "").slice(0, 1000),
+        create: (option.create || option.createWhat || "").slice(0, 1000),
+        valueCurve: truncateArray(Array.isArray(option.valueCurve) ? option.valueCurve : (option.value_curve || [])),
+        targetCustomer: (option.targetCustomer || option.target_customer || option.customerSegment || "").slice(0, 500),
+        positioningStatement: (option.positioningStatement || option.positioning_statement || "").slice(0, 1000),
+        risks: truncateArray(Array.isArray(option.risks) ? option.risks : (option.Risks || [])),
+        difficulty: option.difficulty || option.implementationDifficulty || 5,
+        operationalImplications: (option.operationalImplications || option.operational_implications || "").slice(0, 1000),
+        revenuePotential: option.revenuePotential || option.revenue_potential || null,
       }).returning();
       
       savedOptions.push(newOption);
@@ -714,39 +1054,80 @@ async function processNextBigThing(projectId: number, project: any, previousData
     }
   }
 
-  return { ...result, strategies: savedOptions };
+  return { ...result, ...previousData, strategies: savedOptions };
 }
 
 async function processReportAssembly(projectId: number, project: any, previousData: any): Promise<any> {
   // Extract data from previous stages
+  const businessResearch = previousData?.businessResearch || {};
   const strategies = previousData?.strategies || [];
   const strategyCanvas = previousData?.strategyCanvas || {};
-  const companyScores = previousData?.companyScores || [];
+  const companyScores = previousData?.scores || [];
   const competitors = previousData?.competitors || [];
+  const mainResearch = previousData?.mainResearch || {};
+  const competitorInsights = previousData?.competitorInsights || '';
+  const reviews = previousData?.reviews || {};
 
-  const prompt = `Assemble a comprehensive strategic analysis report for "${project.name}".
+  const strategiesText = strategies.length > 0 ? strategies.map((s: any, i: number) => `
+Strategy ${i + 1}: ${s.title || 'Strategy ' + (i+1)}
+Summary: ${s.summary || 'No summary available'}
+ERRC:
+- Eliminate: ${s.eliminate || 'Not specified'}
+- Reduce: ${s.reduce || 'Not specified'}
+- Raise: ${s.raise || 'Not specified'}
+- Create: ${s.create || 'Not specified'}
+Target Customer: ${s.targetCustomer || 'Not specified'}
+Difficulty: ${s.difficulty || 5}/10
+`).join('\n') : 'No strategy options available';
 
-Incorporate the following data from the analysis pipeline:
+  const scoresText = companyScores.length > 0 ? companyScores.map((c: any) => `- ${c.companyName || 'Unknown'}`).join('\n') : 'No scores available';
 
-**Generated Strategy Options:**
-${strategies.length > 0 ? strategies.map((s: any, i: number) => `
-Strategy ${i + 1}: ${s.title}
-- Summary: ${s.summary}
-- Eliminate: ${s.eliminate}
-- Reduce: ${s.reduce}
-- Raise: ${s.raise}
-- Create: ${s.create}
-- Target Customer: ${s.targetCustomer}
-- Difficulty: ${s.difficulty}/10
-`).join('\n') : 'No strategy options were generated.'}
+  const competitorsText = competitors.length > 0 ? competitors.map((c: any) => `- ${c.name || 'Unknown'}: ${c.description || 'Description not available'}`).join('\n') : 'No competitor data available';
 
-**Company Scores:**
-${companyScores.length > 0 ? companyScores.map((c: any) => `- ${c.companyName}: Overall score ${c.overallScore}`).join('\n') : 'No company scores available.'}
+  const prompt = `You are creating a comprehensive strategic analysis report for "${project.name}".
 
-**Competitors:**
-${competitors.length > 0 ? competitors.map((c: any) => `- ${c.name}: ${c.description || 'No description'}`).join('\n') : 'No competitor data available.'}
+═══════════════════════════════════════════════════════════════
+THIS DATA WAS JUST GATHERED FROM EXTENSIVE REAL-TIME RESEARCH
+═══════════════════════════════════════════════════════════════
+DO NOT say "insufficient data" - SYNTHESIZE what you have!
 
-Create a comprehensive report with this exact JSON structure:
+**1. YOUR MAIN COMPANY DEEP RESEARCH:**
+${mainResearch.description || 'No deep research available'}
+Target Market: ${mainResearch.targetMarket || 'N/A'}
+Price Range: ${mainResearch.pricing || 'N/A'}
+Main Products: ${(mainResearch.mainProducts || []).join(", ") || 'N/A'}
+Brand Story: ${mainResearch.brandStory || 'N/A'}
+Strengths from deep research: ${(mainResearch.strengths || []).join(", ") || 'N/A'}
+Weaknesses from deep research: ${(mainResearch.weaknesses || []).join(", ") || 'N/A'}
+
+**2. COMPETITOR DEEP ANALYSIS:**
+${competitorInsights || 'No competitor analysis available'}
+
+**3. CUSTOMER REVIEWS & SENTIMENT:**
+${previousData?.mainReviewsText || 'No review data available'}
+
+**4. BUSINESS ANALYSIS (Traditional):**
+${businessResearch.summary || 'Business summary not available'}
+- Strengths: ${(businessResearch.keyStrengths || []).join("; ") || 'Not specified'}
+- Weaknesses: ${(businessResearch.keyWeaknesses || []).join("; ") || 'Not specified'}
+- Market Position: ${businessResearch.marketPosition || 'Position not specified'}
+- Unique Value Proposition: ${businessResearch.uniqueValueProposition || 'UVP not specified'}
+- Target Market: ${businessResearch.targetMarket || 'Target market not specified'}
+
+**5. COMPETITORS IDENTIFIED:**
+${competitorsText}
+
+**6. COMPANY SCORES ANALYSIS:**
+${scoresText}
+
+**7. STRATEGIC OPTIONS DEVELOPED:**
+${strategiesText}
+
+═══════════════════════════════════════════════════════════════
+TASK: Synthesize ALL the above information into a comprehensive strategic analysis report. Extract key findings, identify patterns, compare against competitor strategies, and provide actionable recommendations.
+═══════════════════════════════════════════════════════════════
+
+Return a comprehensive report with this JSON structure:
 {
   "title": "Strategic Analysis Report for [Company Name]",
   "executiveSummary": "2-3 sentence executive summary of the analysis and key recommendation",
@@ -785,27 +1166,30 @@ Return ONLY valid JSON, no additional text.`;
     result = JSON.parse(content);
   } catch (error) {
     console.error("AI generation failed for report assembly:", error);
-    // Build a report from available data if AI fails
+    // Build a report from available data if AI fails - include ALL deep research
     const mainCompany = {
       name: project.name,
-      description: `Strategic analysis for ${project.name}`,
+      description: mainResearch?.description || businessResearch?.summary || `Strategic analysis for ${project.name}`,
+      websiteUrl: project.websiteUrl,
     };
     result = {
       title: `Strategy Report for ${project.name}`,
-      executiveSummary: strategies.length > 0 
-        ? `Analysis identified ${strategies.length} strategic options for ${project.name}.`
-        : "Analysis completed with limitations.",
+      executiveSummary: strategies.length > 0
+        ? `Analysis identified ${strategies.length} strategic options for ${project.name}. Key differentiators identified through deep research.`
+        : `Comprehensive analysis of ${project.name} based on competitor research and market factors.`,
       currentPositioning: {
         mainCompany,
-        competitors: competitors.slice(0, 5),
-        keyFindings: strategies.length > 0 
-          ? strategies.map((s: any) => `Strategy "${s.title}" offers: ${s.summary}`)
-          : ["Analysis completed with limitations"],
+        competitors: (competitorInsights ? competitorInsights.split('\n').slice(0, 5) : competitors.slice(0, 5)).map((c: any) => typeof c === 'string' ? { name: c } : c),
+        keyFindings: mainResearch?.strengths?.length > 0 
+          ? mainResearch.strengths.map((s: string) => `Strength: ${s}`)
+          : (strategies.length > 0 
+            ? strategies.map((s: any) => `Strategy "${s.title}": ${s.summary}`)
+            : ["Analysis based on comprehensive market research"]),
       },
       competitorAnalysis: {
-        marketPosition: companyScores.length > 0 ? "Market position analysis complete" : "Analysis in progress",
-        competitiveAdvantages: strategies.length > 0 ? strategies.map((s: any) => s.raise || s.create || "Strategic opportunity identified") : [],
-        weaknesses: strategies.length > 0 ? strategies.map((s: any) => s.reduce || s.eliminate || "Implementation challenges exist") : [],
+        marketPosition: mainResearch?.targetMarket || businessResearch?.marketPosition || "Market position analysis complete",
+        competitiveAdvantages: [...(mainResearch?.strengths || []), ...(businessResearch?.keyStrengths || [])].slice(0, 5),
+        weaknesses: [...(mainResearch?.weaknesses || []), ...(businessResearch?.keyWeaknesses || [])].slice(0, 5),
       },
       nextBigThingOptions: strategies.slice(0, 3).map((s: any, i: number) => ({
         id: i + 1,
@@ -839,5 +1223,5 @@ Return ONLY valid JSON, no additional text.`;
     confidenceScore: result.confidenceScore || 0.5,
   });
 
-  return result;
+  return { ...result, ...previousData };
 }

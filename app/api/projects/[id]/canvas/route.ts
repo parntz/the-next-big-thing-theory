@@ -21,8 +21,8 @@ export async function GET(
       eq(schema.factors.projectId, id)
     );
 
-    // Get companies
-    const companies = await db.select().from(schema.companies).where(
+    // Get companies - only ones that have scores (i.e., the top 6 competitors + main company)
+    const allCompanies = await db.select().from(schema.companies).where(
       eq(schema.companies.projectId, id)
     );
 
@@ -30,6 +30,10 @@ export async function GET(
     const scores = await db.select().from(schema.companyFactorScores).where(
       eq(schema.companyFactorScores.projectId, id)
     );
+
+    // Only include companies that have at least one score (i.e., were actually scored)
+    const scoredCompanyIds = new Set(scores.map(s => s.companyId));
+    const companies = allCompanies.filter(c => scoredCompanyIds.has(c.id));
 
     // Build canvas data structure
     const canvasData = {

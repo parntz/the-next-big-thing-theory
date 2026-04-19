@@ -91,34 +91,26 @@ export async function DELETE(
       return NextResponse.json({ error: "Project not found" }, { status: 404 });
     }
 
-    // Delete related data first (in order of dependencies)
-    const analysisRuns = await getAnalysisRunsByProject(id);
+    // Delete in correct order to handle foreign keys
+    // 1. First delete tables that reference other project-related tables
+    await db.delete(schema.companyFactorScores).where(eq(schema.companyFactorScores.projectId, id));
+    await db.delete(schema.evidenceItems).where(eq(schema.evidenceItems.projectId, id));
     
-    // Delete analysis runs and related data
-    for (const run of analysisRuns) {
-      // Delete factors for this project
-      await db.delete(schema.factors).where(eq(schema.factors.projectId, id));
-      
-      // Delete company factor scores for this project
-      await db.delete(schema.companyFactorScores).where(eq(schema.companyFactorScores.projectId, id));
-      
-      // Delete next big thing options for this project
-      await db.delete(schema.nextBigThingOptions).where(eq(schema.nextBigThingOptions.projectId, id));
-      
-      // Delete reports for this project
-      await db.delete(schema.reports).where(eq(schema.reports.projectId, id));
-      
-      // Delete analysis run itself
-      await db.delete(schema.analysisRuns).where(eq(schema.analysisRuns.id, run.id));
-    }
-
-    // Delete competitors
+    // 2. Delete next_big_thing_options and reports (they reference analysis_runs)
+    await db.delete(schema.nextBigThingOptions).where(eq(schema.nextBigThingOptions.projectId, id));
+    await db.delete(schema.reports).where(eq(schema.reports.projectId, id));
+    
+    // 3. Delete analysis_runs (no one references it now)
+    await db.delete(schema.analysisRuns).where(eq(schema.analysisRuns.projectId, id));
+    
+    // 4. Delete competitors and companies (depends on project, but also some have internal refs)
     await db.delete(schema.competitors).where(eq(schema.competitors.projectId, id));
-    
-    // Delete companies
     await db.delete(schema.companies).where(eq(schema.companies.projectId, id));
     
-    // Delete the project
+    // 5. Delete factors (no one references it after companyFactorScores is gone)
+    await db.delete(schema.factors).where(eq(schema.factors.projectId, id));
+    
+    // 6. Finally delete the project
     await db.delete(schema.projects).where(eq(schema.projects.id, id));
 
     return NextResponse.json({ success: true, message: "Project deleted successfully" });

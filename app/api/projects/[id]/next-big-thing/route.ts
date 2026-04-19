@@ -32,10 +32,16 @@ export async function GET(
         reduce: opt.reduce,
         raise: opt.raise,
         create: opt.create,
-        valueCurve: opt.valueCurve,
+        valueCurve: typeof opt.valueCurve === 'string' ? JSON.parse(opt.valueCurve) : opt.valueCurve,
         targetCustomer: opt.targetCustomer,
         positioningStatement: opt.positioningStatement,
-        risks: opt.risks,
+        risks: (() => {
+          try {
+            return typeof opt.risks === 'string' ? JSON.parse(opt.risks) : (opt.risks || []);
+          } catch {
+            return [];
+          }
+        })(),
         difficulty: opt.difficulty,
         operationalImplications: opt.operationalImplications,
         revenuePotential: opt.revenuePotential,

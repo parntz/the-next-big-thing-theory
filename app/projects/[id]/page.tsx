@@ -29,6 +29,9 @@ const ANALYSIS_STAGES = [
   { key: "business_research", label: "Business Research" },
   { key: "competitor_discovery", label: "Competitor Discovery" },
   { key: "competitor_normalization", label: "Analyzing Competitors" },
+  { key: "deep_main_research", label: "Deep Website Analysis" },
+  { key: "deep_competitor_research", label: "Competitor Deep Dive" },
+  { key: "review_aggregation", label: "Review Aggregation" },
   { key: "factor_generation", label: "Generating Factors" },
   { key: "company_scoring", label: "Scoring Companies" },
   { key: "strategy_canvas", label: "Building Strategy Canvas" },
@@ -40,12 +43,30 @@ const STAGE_LABELS: Record<string, string> = {
   business_research: "Business Research",
   competitor_discovery: "Competitor Discovery",
   competitor_normalization: "Analyzing Competitors",
+  deep_main_research: "Deep Dive: Your Website",
+  deep_competitor_research: "Deep Dive: Competitor Sites",
+  review_aggregation: "Gathering Reviews (Google, Yelp, Reddit)",
   factor_generation: "Generating Factors",
   company_scoring: "Scoring Companies",
   strategy_canvas: "Building Strategy Canvas",
   next_big_thing: "Generating Strategies",
   report_assembly: "Assembling Report",
   complete: "Analysis Complete",
+};
+
+const STAGE_DETAILS: Record<string, string> = {
+  business_research: "Gathering basic business information...",
+  competitor_discovery: "Identifying your main competitors...",
+  competitor_normalization: "Standardizing competitor data...",
+  deep_main_research: "Scraping your website for detailed insights...",
+  deep_competitor_research: "Deep diving into competitor websites...",
+  review_aggregation: "Finding customer reviews from multiple sources...",
+  factor_generation: "Identifying key market factors...",
+  company_scoring: "Scoring your company vs competitors...",
+  strategy_canvas: "Building your strategy canvas...",
+  next_big_thing: "Creating breakthrough strategy options...",
+  report_assembly: "Writing your comprehensive report...",
+  complete: "Done!",
 };
 
 export default function ProjectPage({ params }: { params: { id: string } }) {
@@ -191,8 +212,11 @@ export default function ProjectPage({ params }: { params: { id: string } }) {
               <div className="flex items-center gap-4">
                 <div className="text-right">
                   <p className="text-sm font-medium text-blue-600">{currentStage}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    {currentStage ? (STAGE_DETAILS[currentStage] || 'Processing...') : 'Starting...'}
+                  </p>
                   <div className="w-48 h-2 bg-gray-200 rounded-full overflow-hidden mt-1">
-                    <div 
+                    <div
                       className="h-full bg-blue-600 transition-all duration-300 ease-out"
                       style={{ width: `${analysisProgress}%` }}
                     />
