@@ -17,7 +17,8 @@ export default function NewProjectPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log("Form submitted with data:", formData);
+    alert("Form submit handler called!"); // Immediate feedback
+    console.log("🚀 Form submitted! Data:", formData);
     setIsLoading(true);
 
     try {
