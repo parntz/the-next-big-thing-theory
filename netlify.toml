@@ -4,11 +4,3 @@ publish = ".next"
 
 [[plugins]]
 package = "@netlify/plugin-nextjs"
-
-[[functions]]
-path = "/*"
-node_bundler = "esbuild"
-
-[[functions]]
-path = "/api/projects/*/analyze"
-maxDuration = 60
