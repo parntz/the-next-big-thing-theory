@@ -44,7 +44,10 @@ export default function NewProjectPage() {
       router.push(`/projects/${data.id}`);
     } catch (error) {
       console.error("Error creating project:", error);
-      alert(`Error: ${error instanceof Error ? error.message : "Failed to create project. Check browser console for details."}`);
+      console.error("Full response data:", data);
+      const errorMessage = error instanceof Error ? error.message : "Failed to create project";
+      const detailedError = data?.details || data?.error || errorMessage;
+      alert(`Error: ${detailedError}\n\nCheck browser console (F12) for full details.`);
       setIsLoading(false);
     }
   };
