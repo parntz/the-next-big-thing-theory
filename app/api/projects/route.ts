@@ -21,8 +21,12 @@ function formatDate(timestamp: number | string | Date): string {
 
 export async function POST(request: NextRequest) {
   try {
+    console.log("1. Starting POST /api/projects");
     const body = await request.json();
+    console.log("2. Request body parsed:", { name: body.name, websiteUrl: body.websiteUrl });
+
     const validation = ProjectCreateSchema.safeParse(body);
+    console.log("3. Validation result:", validation.success ? "passed" : "failed");
 
     if (!validation.success) {
       return NextResponse.json(
@@ -31,9 +35,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    console.log("4. Getting database connection...");
     const db = getDb();
-    console.log("Database connection established");
-    
+    console.log("5. Database connection established successfully");
+
+    console.log("6. Inserting project into database...");
     const [project] = await db
       .insert(schema.projects)
       .values({
@@ -46,10 +52,10 @@ export async function POST(request: NextRequest) {
       })
       .returning();
 
-    console.log("Project created:", project.id);
+    console.log("7. Project created successfully:", project.id);
 
     return NextResponse.json(
-      { 
+      {
         id: project.id,
         name: project.name,
         websiteUrl: project.websiteUrl,
@@ -62,10 +68,13 @@ export async function POST(request: NextRequest) {
       { status: 201 }
     );
   } catch (error) {
-    console.error("Error creating project:", error);
-    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    console.error("ERROR in POST /api/projects:", error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorStack = error instanceof Error ? error.stack : "No stack trace";
+    console.error("Error details:", errorMessage);
+    console.error("Error stack:", errorStack);
     return NextResponse.json(
-      { error: "Failed to create project", details: errorMessage },
+      { error: "Failed to create project", details: errorMessage, stack: errorStack },
       { status: 500 }
     );
   }
