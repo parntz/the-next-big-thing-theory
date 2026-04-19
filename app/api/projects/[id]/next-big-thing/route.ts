@@ -17,10 +17,44 @@ export async function GET(
 
     const db = getDb();
 
-    // Get next big thing options
+    // Get next big thing options from table
     const options = await db.select().from(schema.nextBigThingOptions).where(
       eq(schema.nextBigThingOptions.projectId, id)
     ).orderBy(schema.nextBigThingOptions.createdAt);
+
+    // If no options in table, try to get from the report
+    if (options.length === 0) {
+      const reports = await db.select().from(schema.reports).where(
+        eq(schema.reports.projectId, id)
+      ).orderBy(schema.reports.createdAt).limit(1);
+
+      if (reports.length > 0 && reports[0].nextBigThingOptions) {
+        const reportOptions = typeof reports[0].nextBigThingOptions === 'string'
+          ? JSON.parse(reports[0].nextBigThingOptions)
+          : reports[0].nextBigThingOptions;
+
+        return NextResponse.json({
+          projectId: id,
+          options: reportOptions.map((opt: any, index: number) => ({
+            id: index + 1,
+            title: opt.title,
+            summary: opt.summary,
+            eliminate: opt.eliminate || opt.reduce || "",
+            reduce: opt.reduce || "",
+            raise: opt.raise || "",
+            create: opt.create || "",
+            valueCurve: opt.valueCurve || [],
+            targetCustomer: opt.targetCustomer || "",
+            positioningStatement: opt.positioningStatement || "",
+            risks: opt.risks || [],
+            difficulty: opt.difficulty || 5,
+            operationalImplications: opt.operationalImplications || "",
+            revenuePotential: opt.revenuePotential || null,
+          })),
+          source: "report",
+        });
+      }
+    }
 
     return NextResponse.json({
       projectId: id,

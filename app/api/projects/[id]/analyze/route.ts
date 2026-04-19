@@ -4,7 +4,7 @@ import { eq, and, sql } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { getProject, createAnalysisRun, updateAnalysisRun, getCompaniesByProject, getCompetitorsByProject, createFactor, createCompany, createCompetitor, createCompanyFactorScore, createNextBigThingOption, createReport } from "@/lib/services/db-service";
 import { formatDate } from "@/lib/utils/date";
-import { analysisService } from "@/lib/services/ai-service";
+import { summaryService, analysisService, strategyService, AI_MODELS, type ModelType } from "@/lib/services/ai-service";
 import { BusinessResearchSchema, CompetitorDiscoverySchema, NormalizedCompetitorSchema, AnalysisFactorSchema, CompanyScoreResultSchema, StrategyCanvasSchema, NextBigThingStrategySchema, NextBigThingResultSchema, StrategyReport, ReportSchema } from "@/lib/services/ai-service";
 import { scrapeWebsite, scrapeCompetitors, formatCompetitorInsights } from "@/lib/services/scraper-service";
 import { aggregateReviews, getCompetitorReviewInsights, formatReviewsForPrompt } from "@/lib/services/review-aggregation-service";
@@ -302,10 +302,10 @@ Provide business research including:
 
 Return JSON with keys: summary, keyStrengths, keyWeaknesses, marketPosition, uniqueValueProposition, revenueModel, targetMarket.`;
 
-  const { content } = await analysisService.generateResponse([
-    { role: "system", content: "You are a business analyst. Provide detailed business research in JSON format." },
+  const { content } = await summaryService.generateResponse([
+    { role: "system", content: "You are a business analyst. Provide detailed business research in JSON format. Always respond with valid JSON only." },
     { role: "user", content: prompt },
-  ]);
+  ], 0.3, 4000, "summary");
 
   const result = JSON.parse(content);
   
@@ -347,10 +347,10 @@ async function processCompetitorDiscovery(projectId: number, project: any, previ
 
   Return JSON with a "competitors" array and market data.`;
 
-  const { content } = await analysisService.generateResponse([
-    { role: "system", content: "You are a market research analyst. Identify competitors in JSON format." },
+  const { content } = await summaryService.generateResponse([
+    { role: "system", content: "You are a market research analyst. Identify competitors in JSON format. Always respond with valid JSON only." },
     { role: "user", content: prompt },
-  ]);
+  ], 0.3, 4000, "summary");
 
   const result = JSON.parse(content);
   
@@ -639,9 +639,9 @@ async function processFactorGeneration(projectId: number, project: any, previous
   Return JSON with a "factors" array where each factor has: name, description, isEliminated, isReduced, isRaised, isNewCreation.`;
 
   const { content } = await analysisService.generateResponse([
-    { role: "system", content: "You are a strategy consultant. Define key factors in JSON format." },
+    { role: "system", content: "You are a strategy consultant. Define key factors with EXACT JSON structure: {\"factors\": [{\"name\": string, \"description\": string, \"isEliminated\": boolean, \"isReduced\": boolean, \"isRaised\": boolean, \"isNewCreation\": boolean}]}. Respond with valid JSON only. Be consistent and precise." },
     { role: "user", content: prompt },
-  ]);
+  ], 0.1, 2000, "analysis");
 
   const result = JSON.parse(content);
   
@@ -688,22 +688,29 @@ async function processCompanyScoring(projectId: number, project: any, previousDa
     factorsList = [];
   }
   console.log("  factorsList (after flatten):", factorsList.length, factorsList[0] ? 'has items' : 'empty');
+
+  // Also flatten competitors if needed
+  let competitorsList = competitors;
+  while (competitorsList.length > 0 && Array.isArray(competitorsList[0])) {
+    competitorsList = competitorsList.flat();
+  }
+
   // Limit to top 6 competitors
-  const topCompetitors = competitors.slice(0, 6);
+  const topCompetitors = competitorsList.slice(0, 6);
   // Include the main company in scoring
   const allCompaniesToScore = [{ name: project.name, isMain: true }, ...topCompetitors.map(c => ({ name: c.name, isMain: false }))];
-  
+
   const prompt = `Score the following companies on each factor for "${project.name}":
-  
+
   Factors: ${factorsList.map((f: any) => f.name).join(", ")}
   Companies: ${allCompaniesToScore.map((c: any) => c.name).join(", ")}
-  
+
   For each company, provide scores (0-10) for each factor with confidence levels and evidence.
-  
+
   Return JSON with "scores" array containing company scores.`;
 
-  console.log("  Prompt factors list:", factors.map((f: any) => f.name).join(", "));
-  console.log("  Prompt competitors list:", competitors.map((c: any) => c.name).join(", "));
+  console.log("  Prompt factors list:", factorsList.map((f: any) => f.name).filter(Boolean).join(", "));
+  console.log("  Prompt competitors list:", allCompaniesToScore.map((c: any) => c.name).join(", "));
 
   let content: string;
   let result: any;
@@ -716,9 +723,9 @@ async function processCompanyScoring(projectId: number, project: any, previousDa
 
   try {
     const response = await analysisService.generateResponse([
-      { role: "system", content: "You are a data analyst. Provide scores in JSON format." },
+      { role: "system", content: "You are a data analyst. Score each company 0-10 on each factor with confidence (0-1). Format: {\"scores\": [{\"companyName\": string, \"scores\": {\"factorName\": {\"score\": number, \"confidence\": number, \"explanation\": string}}}]}. Always respond with valid JSON only. Be consistent in your scoring methodology." },
       { role: "user", content: prompt },
-    ]);
+    ], 0.1, 4000, "analysis");
     content = response.content;
     console.log("  Raw AI content (first 500 chars):", content.substring(0, 500));
     result = JSON.parse(content);
@@ -809,11 +816,16 @@ async function processCompanyScoring(projectId: number, project: any, previousDa
 
       console.log("      inserting score for company:", company.name, "factor:", factor.name, "score:", scoreData);
 
+      // Validate score is a number between 0-10
+      let validScore = typeof scoreData === 'number' ? scoreData : parseFloat(scoreData);
+      if (isNaN(validScore) || validScore < 0) validScore = 0;
+      if (validScore > 10) validScore = 10;
+
       const newScore = await db.insert(schema.companyFactorScores).values({
         projectId,
         companyId: company.id,
         factorId: factor.id,
-        score: scoreData,
+        score: validScore,
         confidence: confidence,
         explanation: explanation || "",
         evidence: JSON.stringify([]),
@@ -892,9 +904,9 @@ async function processStrategyCanvas(projectId: number, project: any, previousDa
   Return JSON with factors array and scores array.`;
 
   const { content } = await analysisService.generateResponse([
-    { role: "system", content: "You are a strategy consultant. Create a strategy canvas in JSON format." },
+    { role: "system", content: "You are a strategy consultant. Create a strategy canvas in JSON format with EXACT structure. Respond with valid JSON only. Be consistent in factor analysis." },
     { role: "user", content: prompt },
-  ]);
+  ], 0.1, 3000, "analysis");
 
   const result = JSON.parse(content);
 
@@ -984,31 +996,31 @@ async function processNextBigThing(projectId: number, project: any, previousData
   let result: any;
   
   try {
-    const response = await analysisService.generateResponse([
-      { role: "system", content: "You are a strategy expert. Create Next Big Thing strategies in JSON format." },
+    const response = await strategyService.generateResponse([
+      { role: "system", content: "You are a creative strategy expert. Generate DIVERSE, INNOVATIVE Next Big Thing strategies using the ERRC framework (Eliminate, Reduce, Raise, Create). Provide 2-3 distinctly different strategic directions. Be bold and creative. IMPORTANT: Respond with valid JSON only, with a 'strategy_options' or 'strategies' or 'nextBigThingOptions' array containing objects with ALL of these fields: title, summary, eliminate, reduce, raise, create, valueCurve, targetCustomer, positioningStatement, risks, difficulty, operationalImplications." },
       { role: "user", content: prompt },
-    ]);
+    ], 0.8, 5000, "strategy");
     content = response.content;
     result = JSON.parse(content);
   } catch (error) {
     console.error("AI generation failed for next big thing:", error);
-    // Return dummy strategies so the pipeline can continue - but include all previous data
+    // Return generic strategies as fallback - but include all previous data
     return {
       ...previousData,
       strategies: [
         {
-          title: "Premium Pet Fashion",
-          summary: "Focus on high-end, stylish pet apparel for affluent pet owners",
-          eliminate: "Low-quality materials",
-          reduce: "Production costs",
-          raise: "Design quality",
-          create: "Exclusive collaborations with fashion designers",
-          targetCustomer: "Affluent millennials and Gen Z pet owners",
-          positioningStatement: "For pet owners who see their pets as family members deserving of premium care",
-          risks: ["Market may be too niche", "Higher production costs"],
-          difficulty: 7,
-          operationalImplications: "Need to source premium materials and hire skilled designers",
-          revenuePotential: "High margins but lower volume",
+          title: "Market Differentiation Strategy",
+          summary: "Identify and capitalize on unique market positioning",
+          eliminate: "Commoditized offerings",
+          reduce: "Average service levels",
+          raise: "Customer experience above industry standard",
+          create: "Unique value proposition",
+          targetCustomer: "Target customer segment based on business type",
+          positioningStatement: "For customers seeking differentiated experience",
+          risks: ["Implementation challenges", "Market acceptance uncertainty"],
+          difficulty: 6,
+          operationalImplications: "Requires strategic investments in customer experience",
+          revenuePotential: "Moderate to high potential",
         }
       ]
     };
@@ -1017,11 +1029,23 @@ async function processNextBigThing(projectId: number, project: any, previousData
   // Save strategy options to the database
   const db = getDb();
   const savedOptions = [];
-  
-  // AI may return either "strategies" or "strategy_options" - empty array is falsy, so check for non-empty
-  const strategyList = (result.strategy_options?.length > 0 ? result.strategy_options : null) ||
+
+  // AI may return various formats - check for all possible keys
+  let strategyList = (result.strategy_options?.length > 0 ? result.strategy_options : null) ||
                        (result.strategies?.length > 0 ? result.strategies : null) ||
+                       (result.nextBigThingOptions?.length > 0 ? result.nextBigThingOptions : null) ||
                        [];
+
+  // If still empty but result is an array, use it directly
+  if (strategyList.length === 0 && Array.isArray(result)) {
+    strategyList = result;
+  }
+
+  console.log("  Strategy list: found", strategyList.length, "options");
+  if (strategyList.length === 0) {
+    console.log("  WARNING: No strategies found! AI result keys:", Object.keys(result));
+    console.log("  AI result content preview:", JSON.stringify(result).slice(0, 500));
+  }
 
   // Helper to truncate arrays to prevent SQLite parameter limits
   const truncateArray = (arr: any[], maxLen: number = 50) => {
@@ -1031,26 +1055,45 @@ async function processNextBigThing(projectId: number, project: any, previousData
 
   for (const option of strategyList) {
     try {
+      // Small delay between inserts to prevent SQLite parameter limit issues
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // Ensure all required fields have valid values (even if empty string)
+      const title = (option.title || option.Name || "Strategy Option").slice(0, 500) || "Untitled Strategy";
+      const summary = (option.summary || option.description || "A strategic option for growth").slice(0, 2000) || "No summary available";
+      const eliminate = (option.eliminate || option.eliminateWhat || option.errc?.eliminate || "").slice(0, 1000) || "Not specified";
+      const reduce = (option.reduce || option.reduceWhat || option.errc?.reduce || "").slice(0, 1000) || "Not specified";
+      const raise = (option.raise || option.raiseWhat || option.errc?.raise || "").slice(0, 1000) || "Not specified";
+      const create = (option.create || option.createWhat || option.errc?.create || "").slice(0, 1000) || "Not specified";
+      const targetCustomer = (option.targetCustomer || option.target_customer || option.customerSegment || "").slice(0, 500) || "Target customers not specified";
+      const positioningStatement = (option.positioningStatement || option.positioning_statement || "").slice(0, 1000) || "Positioning not defined";
+      const operationalImplications = (option.operationalImplications || option.operational_implications || "").slice(0, 1000) || "Operational implications not detailed";
+      const difficulty = option.difficulty || option.implementationDifficulty || 5;
+      const revenuePotential = option.revenuePotential || option.revenue_potential || null;
+
       const newOption = await db.insert(schema.nextBigThingOptions).values({
         projectId,
-        title: (option.title || option.Name || "Strategy Option").slice(0, 500),
-        summary: (option.summary || option.description || "A strategic option for growth").slice(0, 2000),
-        eliminate: (option.eliminate || option.eliminateWhat || "").slice(0, 1000),
-        reduce: (option.reduce || option.reduceWhat || "").slice(0, 1000),
-        raise: (option.raise || option.raiseWhat || "").slice(0, 1000),
-        create: (option.create || option.createWhat || "").slice(0, 1000),
-        valueCurve: truncateArray(Array.isArray(option.valueCurve) ? option.valueCurve : (option.value_curve || [])),
-        targetCustomer: (option.targetCustomer || option.target_customer || option.customerSegment || "").slice(0, 500),
-        positioningStatement: (option.positioningStatement || option.positioning_statement || "").slice(0, 1000),
-        risks: truncateArray(Array.isArray(option.risks) ? option.risks : (option.Risks || [])),
-        difficulty: option.difficulty || option.implementationDifficulty || 5,
-        operationalImplications: (option.operationalImplications || option.operational_implications || "").slice(0, 1000),
-        revenuePotential: option.revenuePotential || option.revenue_potential || null,
+        title,
+        summary,
+        eliminate,
+        reduce,
+        raise,
+        create,
+        // Explicitly JSON.stringify to avoid Drizzle expanding arrays into too many SQL parameters
+        valueCurve: JSON.stringify(truncateArray(Array.isArray(option.valueCurve) ? option.valueCurve : (option.value_curve || []), 20)),
+        targetCustomer,
+        positioningStatement,
+        risks: JSON.stringify(truncateArray(Array.isArray(option.risks) ? option.risks : (option.Risks || []), 20)),
+        difficulty,
+        operationalImplications,
+        revenuePotential,
       }).returning();
-      
-      savedOptions.push(newOption);
+
+      console.log("  Saved strategy option:", newOption[0]?.title);
+      savedOptions.push(newOption[0]); // Push the actual object, not the array
     } catch (saveError) {
       console.error("Failed to save strategy option:", saveError);
+      console.error("  Option that failed:", JSON.stringify(option).slice(0, 500));
     }
   }
 
@@ -1068,6 +1111,12 @@ async function processReportAssembly(projectId: number, project: any, previousDa
   const competitorInsights = previousData?.competitorInsights || '';
   const reviews = previousData?.reviews || {};
 
+  console.log("  Report assembly: strategies count =", strategies.length);
+  if (strategies.length > 0) {
+    console.log("  First strategy keys:", Object.keys(strategies[0]));
+    console.log("  First strategy sample:", JSON.stringify(strategies[0]).slice(0, 300));
+  }
+
   const strategiesText = strategies.length > 0 ? strategies.map((s: any, i: number) => `
 Strategy ${i + 1}: ${s.title || 'Strategy ' + (i+1)}
 Summary: ${s.summary || 'No summary available'}
@@ -1077,7 +1126,10 @@ ERRC:
 - Raise: ${s.raise || 'Not specified'}
 - Create: ${s.create || 'Not specified'}
 Target Customer: ${s.targetCustomer || 'Not specified'}
+Positioning: ${s.positioningStatement || 'Not specified'}
+Risks: ${Array.isArray(s.risks) ? s.risks.join(', ') : 'Not specified'}
 Difficulty: ${s.difficulty || 5}/10
+Operational Implications: ${s.operationalImplications || 'Not specified'}
 `).join('\n') : 'No strategy options available';
 
   const scoresText = companyScores.length > 0 ? companyScores.map((c: any) => `- ${c.companyName || 'Unknown'}`).join('\n') : 'No scores available';
@@ -1142,7 +1194,7 @@ Return a comprehensive report with this JSON structure:
     "weaknesses": ["...", "..."]
   },
   "nextBigThingOptions": [
-    { "id": 1, "title": "...", "summary": "...", "difficulty": 5 }
+    { "id": 1, "title": "...", "summary": "...", "difficulty": 5, "eliminate": "...", "reduce": "...", "raise": "...", "create": "...", "targetCustomer": "...", "positioningStatement": "...", "risks": [...], "operationalImplications": "...", "valueCurve": [...] }
   ],
   "recommendedStrategy": {
     "id": 1,
@@ -1158,10 +1210,10 @@ Return ONLY valid JSON, no additional text.`;
   let result: any;
   
   try {
-    const response = await analysisService.generateResponse([
-      { role: "system", content: "You are a strategic analysis report writer. Create detailed, actionable reports based on provided analysis data. Always respond with valid JSON only." },
+    const response = await strategyService.generateResponse([
+      { role: "system", content: "You are a strategic analysis report writer. Synthesize all provided research into a comprehensive, actionable strategic report. Be analytical yet creative in your synthesis. Identify patterns and insights across all data sources. Always respond with valid JSON only." },
       { role: "user", content: prompt },
-    ]);
+    ], 0.75, 6000, "strategy");
     content = response.content;
     result = JSON.parse(content);
   } catch (error) {
@@ -1195,7 +1247,16 @@ Return ONLY valid JSON, no additional text.`;
         id: i + 1,
         title: s.title || "Strategic Option",
         summary: s.summary || "A strategic option for growth",
+        eliminate: s.eliminate || "",
+        reduce: s.reduce || "",
+        raise: s.raise || "",
+        create: s.create || "",
+        targetCustomer: s.targetCustomer || "",
+        positioningStatement: s.positioningStatement || "",
+        risks: Array.isArray(s.risks) ? s.risks : [],
         difficulty: s.difficulty || 5,
+        operationalImplications: s.operationalImplications || "",
+        valueCurve: Array.isArray(s.valueCurve) ? s.valueCurve : [],
       })),
       recommendedStrategy: strategies.length > 0 ? {
         id: 1,

@@ -1,4 +1,4 @@
-import { analysisService } from "./ai-service";
+import { summaryService } from "./ai-service";
 
 interface ScrapeResult {
   success: boolean;
@@ -80,10 +80,10 @@ ${contextSection}Conduct a DEEP analysis covering:
     
     Be thorough - check their about page, products page, blog, and any review sections visible.`;
 
-    const { content } = await analysisService.generateResponse([
-      { role: "system", content: "You are an expert web researcher. Analyze websites thoroughly and provide detailed, accurate information." },
+    const { content } = await summaryService.generateResponse([
+      { role: "system", content: "You are an expert web researcher. Analyze websites thoroughly and provide detailed, accurate information in valid JSON format. Always respond with valid JSON only." },
       { role: "user", content: prompt }
-    ], 0.3, 4000);
+    ], 0.3, 6000, "summary");
 
     const result = JSON.parse(content);
     console.log(`[Scraper] Completed deep dive for ${siteName}`);

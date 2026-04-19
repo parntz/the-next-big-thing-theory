@@ -1,4 +1,4 @@
-import { analysisService } from "./ai-service";
+import { summaryService } from "./ai-service";
 
 interface Review {
   source: string;
@@ -35,23 +35,34 @@ export async function aggregateReviews(
 
     Search multiple sources and compile reviews:
     
-    1. **Google Reviews**: Search for "[Business Name] Google Reviews" or "[Business Name] reviews Google"
+    1. **Google Reviews**: Search for "${businessName} Google Reviews" or "${businessName} reviews"
+       - Check Google Maps reviews specifically for this business
+       - Look for reviews mentioning their products, services, customer experience
     
-    2. **Yelp Reviews**: Search for "[Business Name] Yelp" or "[Business Name] reviews on Yelp"
+    2. **Yelp Reviews**: Search for "${businessName} Yelp" or "${businessName} reviews on Yelp"
+       - Focus on location-specific Yelp reviews for this business type
+       - Look for reviews mentioning quality, pricing, service, experience
     
-    3. **Reddit**: Search Reddit for discussions about "[Business Name]" or "[Business Name] reviews" or "[Business Name] experience"
-       - Check subreddits like r/Ecommerce, r/Entrepreneur, r/SmallBusiness, or niche subreddits related to their industry
+    3. **Reddit**: Search Reddit for "${businessName}" or "${businessName} reviews" or "${businessName} experience"
+       - Check local city/region subreddits (e.g., r/[cityname], r/[statename])
+       - Check industry-specific subreddits related to their business type
        - Look for genuine customer experiences and opinions
     
-    4. **Twitter/X**: Search for "[Business Name]" tweets and mentions
+    4. **Twitter/X**: Search for "${businessName}" tweets and mentions
+       - Look for customer feedback, complaints, or praise
+       - Check if they have any recent promotions or customer interactions
     
-    5. **General Web**: Any other review platforms or news articles mentioning them
+    5. **Facebook/Instagram**: Search for "${businessName}" social media
+       - Check their Facebook page reviews if available
+       - Look at Instagram posts and comments about this business
+       - Search for location-tagged posts about this business
     
     For each source, note:
-    - Source name (Google, Yelp, Reddit, Twitter, etc.)
+    - Source name (Google, Yelp, Reddit, Twitter, Instagram, Facebook)
     - Rating if available (1-5 stars)
     - Key points from the review (positive and negative)
     - Date of the review if visible
+    - Specific mentions of products, services, pricing, customer experience
     
     Compile a comprehensive JSON response:
     {
@@ -70,10 +81,10 @@ export async function aggregateReviews(
     
     Focus on finding actual customer reviews and experiences. Look for patterns in what customers love and what they hate.`;
 
-    const { content } = await analysisService.generateResponse([
-      { role: "system", content: "You are a research assistant specializing in finding and analyzing customer reviews from multiple online sources." },
+    const { content } = await summaryService.generateResponse([
+      { role: "system", content: "You are a research assistant specializing in finding and analyzing customer reviews. Aggregate reviews from multiple sources and identify patterns. Always respond with valid JSON only." },
       { role: "user", content: prompt }
-    ], 0.3, 3000);
+    ], 0.3, 5000, "summary");
 
     const result = JSON.parse(content);
     console.log(`[ReviewAgg] Found ${result.reviews?.length || 0} reviews`);
