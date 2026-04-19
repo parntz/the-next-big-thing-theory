@@ -11,9 +11,3 @@
   node_bundler = "esbuild"
   # Set timeout to 60 seconds (maximum allowed)
   timeout = 60
-
-# Configure specific function timeouts
-[[functions]]
-  # Analyze endpoint needs longer timeout
-  path = "/api/projects/*/analyze"
-  timeout = 60

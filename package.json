@@ -13,6 +13,7 @@
     "db:push": "drizzle-kit push"
   },
   "dependencies": {
+    "@iarna/toml": "^2.2.5",
     "@libsql/client": "^0.14.0",
     "ai": "^3.0.0",
     "better-sqlite3": "^9.1.2",
