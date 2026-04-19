@@ -647,6 +647,7 @@ ${project.region ? `Region: ${project.region}` : ''}
   try {
     const results = await scrapeCompetitors(topCompetitors, businessContext);
     const competitorInsights = formatCompetitorInsights(results);
+    const db = getDb();
 
     // Update competitors in DB with discovered URLs from scraping
     for (const competitor of topCompetitors) {
@@ -1358,52 +1359,55 @@ Return ONLY valid JSON, no additional text.`;
         // Final attempt failed, use fallback
         console.log("All retry attempts failed, using fallback report generation");
         // Build a report from available data if AI fails - include ALL deep research
-    const mainCompany = {
-      name: project.name,
-      description: mainResearch?.description || businessResearch?.summary || `Strategic analysis for ${project.name}`,
-      websiteUrl: project.websiteUrl,
-    };
-    result = {
-      title: `Strategy Report for ${project.name}`,
-      executiveSummary: strategies.length > 0
-        ? `Analysis identified ${strategies.length} strategic options for ${project.name}. Key differentiators identified through deep research.`
-        : `Comprehensive analysis of ${project.name} based on competitor research and market factors.`,
-      currentPositioning: {
-        mainCompany,
-        competitors: (competitorInsights ? competitorInsights.split('\n').slice(0, 5) : competitors.slice(0, 5)).map((c: any) => typeof c === 'string' ? { name: c } : c),
-        keyFindings: mainResearch?.strengths?.length > 0 
-          ? mainResearch.strengths.map((s: string) => `Strength: ${s}`)
-          : (strategies.length > 0 
-            ? strategies.map((s: any) => `Strategy "${s.title}": ${s.summary}`)
-            : ["Analysis based on comprehensive market research"]),
-      },
-      competitorAnalysis: {
-        marketPosition: mainResearch?.targetMarket || businessResearch?.marketPosition || "Market position analysis complete",
-        competitiveAdvantages: [...(mainResearch?.strengths || []), ...(businessResearch?.keyStrengths || [])].slice(0, 5),
-        weaknesses: [...(mainResearch?.weaknesses || []), ...(businessResearch?.keyWeaknesses || [])].slice(0, 5),
-      },
-      nextBigThingOptions: strategies.slice(0, 3).map((s: any, i: number) => ({
-        id: i + 1,
-        title: s.title || "Strategic Option",
-        summary: s.summary || "A strategic option for growth",
-        eliminate: s.eliminate || "",
-        reduce: s.reduce || "",
-        raise: s.raise || "",
-        create: s.create || "",
-        targetCustomer: s.targetCustomer || "",
-        positioningStatement: s.positioningStatement || "",
-        risks: Array.isArray(s.risks) ? s.risks : [],
-        difficulty: s.difficulty || 5,
-        operationalImplications: s.operationalImplications || "",
-        valueCurve: Array.isArray(s.valueCurve) ? s.valueCurve : [],
-      })),
-      recommendedStrategy: strategies.length > 0 ? {
-        id: 1,
-        title: strategies[0].title,
-        summary: strategies[0].summary,
-      } : null,
-      confidenceScore: strategies.length > 0 ? 0.7 : 0.3,
-    };
+        const mainCompany = {
+          name: project.name,
+          description: mainResearch?.description || businessResearch?.summary || `Strategic analysis for ${project.name}`,
+          websiteUrl: project.websiteUrl,
+        };
+        result = {
+          title: `Strategy Report for ${project.name}`,
+          executiveSummary: strategies.length > 0
+            ? `Analysis identified ${strategies.length} strategic options for ${project.name}. Key differentiators identified through deep research.`
+            : `Comprehensive analysis of ${project.name} based on competitor research and market factors.`,
+          currentPositioning: {
+            mainCompany,
+            competitors: (competitorInsights ? competitorInsights.split('\n').slice(0, 5) : competitors.slice(0, 5)).map((c: any) => typeof c === 'string' ? { name: c } : c),
+            keyFindings: mainResearch?.strengths?.length > 0 
+              ? mainResearch.strengths.map((s: string) => `Strength: ${s}`)
+              : (strategies.length > 0 
+                ? strategies.map((s: any) => `Strategy "${s.title}": ${s.summary}`)
+                : ["Analysis based on comprehensive market research"]),
+          },
+          competitorAnalysis: {
+            marketPosition: mainResearch?.targetMarket || businessResearch?.marketPosition || "Market position analysis complete",
+            competitiveAdvantages: [...(mainResearch?.strengths || []), ...(businessResearch?.keyStrengths || [])].slice(0, 5),
+            weaknesses: [...(mainResearch?.weaknesses || []), ...(businessResearch?.keyWeaknesses || [])].slice(0, 5),
+          },
+          nextBigThingOptions: strategies.slice(0, 3).map((s: any, i: number) => ({
+            id: i + 1,
+            title: s.title || "Strategic Option",
+            summary: s.summary || "A strategic option for growth",
+            eliminate: s.eliminate || "",
+            reduce: s.reduce || "",
+            raise: s.raise || "",
+            create: s.create || "",
+            targetCustomer: s.targetCustomer || "",
+            positioningStatement: s.positioningStatement || "",
+            risks: Array.isArray(s.risks) ? s.risks : [],
+            difficulty: s.difficulty || 5,
+            operationalImplications: s.operationalImplications || "",
+            valueCurve: Array.isArray(s.valueCurve) ? s.valueCurve : [],
+          })),
+          recommendedStrategy: strategies.length > 0 ? {
+            id: 1,
+            title: strategies[0].title,
+            summary: strategies[0].summary,
+          } : null,
+          confidenceScore: strategies.length > 0 ? 0.7 : 0.3,
+        };
+        break; // Exit the retry loop
+      }
+    }
   }
   
   // Save report to the database

@@ -30,7 +30,7 @@ export type ModelType = "summary" | "analysis" | "strategy";
 export class AIService {
   private apiKey: string;
   private apiUrl: string;
-  private requestTimeoutMs: number;
+  public requestTimeoutMs: number;
 
   constructor(apiKey?: string) {
     this.apiKey = apiKey || process.env.TOGETHER_API_KEY || "";

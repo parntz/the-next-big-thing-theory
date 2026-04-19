@@ -51,7 +51,7 @@ interface ReportPdfProps {
       summary?: string;
       difficulty?: number;
     }>;
-    recommendedStrategy?: { title?: string; summary?: string };
+    recommendedStrategy?: { id?: number; title?: string; summary?: string };
   };
   companyName?: string;
   competitors?: Array<{ name?: string; description?: string; websiteUrl?: string }>;
@@ -133,10 +133,10 @@ export function ReportPdf({ report, companyName, competitors }: ReportPdfProps) 
             {(report.nextBigThingOptions || []).map((option, i) => (
               <View
                 key={i}
-                style={[
-                  styles.strategicCard,
-                  report.recommendedStrategy?.id === option.id && { borderColor: "#16a34a", borderWidth: 2 },
-                ]}
+                style={{
+                  ...styles.strategicCard,
+                  ...(report.recommendedStrategy?.id === option.id ? { borderColor: "#16a34a", borderWidth: 2 } : {}),
+                }}
               >
                 {report.recommendedStrategy?.id === option.id && (
                   <Text style={styles.recommendedBadge}>★ Recommended</Text>
