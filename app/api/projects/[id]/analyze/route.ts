@@ -520,6 +520,7 @@ Do NOT repeat any competitor already listed above.`;
     }
 
     // Also create or update company record for the canvas
+    // Always ensure competitor has a company record (even if competitor already existed)
     const existingCompany = await db.select().from(schema.companies).where(
       and(
         eq(schema.companies.projectId, projectId),
@@ -535,6 +536,12 @@ Do NOT repeat any competitor already listed above.`;
         description: competitor.description || "",
         isMainCompany: false,
       });
+    } else {
+      // Update company record if competitor data changed
+      await db.update(schema.companies).set({
+        websiteUrl: competitor.websiteUrl || existingCompany.websiteUrl,
+        description: competitor.description || existingCompany.description,
+      }).where(eq(schema.companies.id, existingCompany.id));
     }
   }
 
