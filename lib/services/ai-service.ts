@@ -1,32 +1,62 @@
 import { z } from "zod";
 
-// AI Model Configuration - Together.ai
-// Together.ai provides OpenAI-compatible API
-// Using serverless models that work without dedicated endpoints
-export const AI_MODELS = {
-  summary: process.env.AI_MODEL_SUMMARY || "MiniMaxAI/MiniMax-M2.7",
-  analysis: process.env.AI_MODEL_ANALYSIS || "MiniMaxAI/MiniMax-M2.7",
-  strategy: process.env.AI_MODEL_STRATEGY || "MiniMaxAI/MiniMax-M2.7",
-};
+// ============================================================================
+// DYNAMIC MODEL DISCOVERY SYSTEM
+// ============================================================================
+// Together.ai model tiers - each tier ordered by performance/reliability
+// System tries models in order, cascading through fallbacks on failure
 
-// Fallback models (used if primary model fails)
-export const AI_FALLBACK_MODELS = {
-  summary: process.env.AI_MODEL_SUMMARY_FALLBACK || null,
-  analysis: process.env.AI_MODEL_ANALYSIS_FALLBACK || null,
-  strategy: process.env.AI_MODEL_STRATEGY_FALLBACK || null,
-};
+// Strategy tasks need highest quality reasoning
+const STRATEGY_TIER = [
+  "deepseek-ai/DeepSeek-V3.1",
+  "Qwen/Qwen3-Coder-Next-FP8",
+  "MiniMaxAI/MiniMax-M2.7",
+  "google/gemini-1.5-pro",
+  "moonshotai/Kimi-K2.5",
+  "anthropic/claude-3.5-sonnet",
+];
 
-// Cost estimates per 1M tokens (approximate)
-export const AI_COSTS = {
-  summary: { input: 0.01, output: 0.01 }, // MiniMax M2.7
-  analysis: { input: 0.01, output: 0.01 },
-  strategy: { input: 0.01, output: 0.01 },
-};
+// Analysis tasks need balanced reasoning
+const ANALYSIS_TIER = [
+  "Qwen/Qwen3-Coder-Next-FP8",
+  "MiniMaxAI/MiniMax-M2.7",
+  "deepseek-ai/DeepSeek-V3.1",
+  "google/gemini-1.5-flash",
+  "moonshotai/Kimi-K2.5",
+  "anthropic/claude-3.5-haiku",
+];
 
-// Model type for type-safe model selection
+// Summary tasks need fast, concise responses
+const SUMMARY_TIER = [
+  "Qwen/Qwen3-Coder-Next-FP8",
+  "google/gemini-1.5-flash",
+  "MiniMaxAI/MiniMax-M2.7",
+  "moonshotai/Kimi-K2.5",
+  "anthropic/claude-3.5-haiku",
+  "meta-llama/Llama-3.3-70B-Instruct",
+];
+
 export type ModelType = "summary" | "analysis" | "strategy";
 
-// AI Service class for Together.ai integration
+// Get ordered model tier for a task type
+function getModelTier(taskType: ModelType): string[] {
+  switch (taskType) {
+    case "strategy": return [...STRATEGY_TIER];
+    case "analysis": return [...ANALYSIS_TIER];
+    case "summary": return [...SUMMARY_TIER];
+  }
+}
+
+// Cost estimates per 1M tokens (approximate)
+export const AI_COSTS: Record<ModelType, { input: number; output: number }> = {
+  summary: { input: 0.008, output: 0.008 },
+  analysis: { input: 0.01, output: 0.01 },
+  strategy: { input: 0.02, output: 0.02 },
+};
+
+// ============================================================================
+// AI SERVICE - DYNAMIC MODEL FALLBACK SYSTEM
+// ============================================================================
 export class AIService {
   private apiKey: string;
   private apiUrl: string;
@@ -37,207 +67,143 @@ export class AIService {
     if (!this.apiKey) {
       console.warn("TOGETHER_API_KEY not set. AI functionality will be limited.");
     }
-
     this.apiUrl = "https://api.together.xyz/v1/chat/completions";
-    this.requestTimeoutMs = parseInt(process.env.AI_REQUEST_TIMEOUT_MS || "30000"); // 30 seconds default
+    this.requestTimeoutMs = parseInt(process.env.AI_REQUEST_TIMEOUT_MS || "10000"); // 10s default
   }
 
-  private resolveModel(model?: ModelType | string): string {
-    if (!model) return AI_MODELS.analysis;
-    if (model === "summary" || model === "analysis" || model === "strategy") {
-      return AI_MODELS[model];
-    }
-    // Assume it's already a model string if not a ModelType
-    return model;
-  }
-
-  private getFallbackModel(modelType?: ModelType): string | null {
-    if (!modelType) return null;
-    return AI_FALLBACK_MODELS[modelType] || null;
-  }
-
+  // Generate response with dynamic model fallback cascading through 6 models
   async generateResponse(
     messages: Array<{ role: string; content: string }>,
     temperature: number = 0.7,
-    maxTokens:  number = 2000,
-    model?: ModelType | string,
-    maxRetries: number = 1
+    maxTokens: number = 2000,
+    modelType: ModelType = "analysis"
   ): Promise<{ content: string; inputTokens: number; outputTokens: number; modelUsed: string }> {
     if (!this.apiKey) {
       throw new Error("AI API key not configured");
     }
 
-    const primaryModel = this.resolveModel(model);
-    const modelType = typeof model === 'string' && ["summary", "analysis", "strategy"].includes(model) ? model as ModelType : undefined;
-    const fallbackModel = this.getFallbackModel(modelType);
+    const modelTier = getModelTier(modelType);
+    let lastError: Error | null = null;
 
-    const attemptGenerate = async (modelToUse: string, attemptMaxTokens: number, attempt: number = 1): Promise<{ content: string; inputTokens: number; outputTokens: number }> => {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), this.requestTimeoutMs);
-      
+    // Try each model in the tier in order
+    for (let i = 0; i < modelTier.length; i++) {
+      const model = modelTier[i];
+      console.log(`[AI] Trying ${modelType} model ${i + 1}/${modelTier.length}: ${model}`);
+
       try {
-        const response = await fetch(this.apiUrl, {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${this.apiKey}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model: modelToUse,
-            messages,
-            temperature,
-            max_tokens: attemptMaxTokens,
-            response_format: { type: "json_object" },
-          }),
-          signal: controller.signal,
-        });
-        clearTimeout(timeoutId);
-
-        if (!response.ok) {
-          const errorBody = await response.text();
-          
-          // Log detailed error information
-          this.logAPIError(response.status, errorBody, modelToUse, attempt);
-          
-          // Distinguish between transport errors and API errors
-          const error = this.classifyError(response.status, errorBody);
-          throw error;
-        }
-
-        const data = await response.json();
-
-        let content = data.choices[0]?.message?.content || "";
-
-        // Try to fix common JSON issues
-        content = this.fixJSON(content);
-
-        // Validate it's valid JSON
-        try {
-          JSON.parse(content);
-        } catch (jsonError) {
-          // If still invalid, try to fix more issues
-          content = this.fixJSON(content, true);
-          try {
-            JSON.parse(content);
-          } catch (finalError) {
-            // Still invalid JSON - log and handle
-            this.logJSONError(content, modelToUse);
-            throw new Error(`Invalid JSON response from AI: ${finalError instanceof Error ? finalError.message : 'Unknown JSON error'}`);
-          }
-        }
-
-        return {
-          content,
-          inputTokens: data.usage?.prompt_tokens || 0,
-          outputTokens: data.usage?.completion_tokens || 0,
-        };
+        const result = await this.callModel(model, messages, temperature, maxTokens);
+        console.log(`[AI] Success with ${model}`);
+        return { ...result, modelUsed: model };
       } catch (error) {
-        clearTimeout(timeoutId);
-        
-        // Handle fetch/network errors specifically
-        if (error instanceof TypeError && error.message.includes('fetch')) {
-          const fetchError = new Error(`Network/transport error: ${error.message}`);
-          fetchError.name = 'FetchError';
-          throw fetchError;
-        }
-        
-        if (error instanceof Error && error.name === 'AbortError') {
-          const timeoutError = new Error(`Request timeout after ${this.requestTimeoutMs}ms`);
-          timeoutError.name = 'TimeoutError';
-          throw timeoutError;
-        }
-        
-        throw error; // Re-throw other errors
+        lastError = error instanceof Error ? error : new Error(String(error));
+        const errorMsg = lastError.message.substring(0, 100);
+        console.warn(`[AI] ${model} failed: ${errorMsg}`);
+        // Continue to next model in tier
       }
-    };
+    }
+
+    // All models failed
+    console.error(`[AI] All ${modelTier.length} ${modelType} models failed`);
+    throw lastError || new Error(`All ${modelType} models failed`);
+  }
+
+  // Call a single model with timeout handling
+  private async callModel(
+    model: string,
+    messages: Array<{ role: string; content: string }>,
+    temperature: number,
+    maxTokens: number
+  ): Promise<{ content: string; inputTokens: number; outputTokens: number }> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.requestTimeoutMs);
 
     try {
-      // First attempt with primary model
-      const result = await attemptGenerate(primaryModel, maxTokens, 1);
-      return { ...result, modelUsed: primaryModel };
-    } catch (firstError) {
-      const errorMessage = firstError instanceof Error ? firstError.message : "Unknown error";
-      const errorType = firstError instanceof Error ? firstError.name : "UnknownError";
-      
-      console.warn(`Primary model ${primaryModel} failed (${errorType}): ${errorMessage}`);
+      const response = await fetch(this.apiUrl, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${this.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model,
+          messages,
+          temperature,
+          max_tokens: maxTokens,
+          response_format: { type: "json_object" },
+        }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
 
-      // Classify the error type
-      const isTransportError = this.isTransportError(firstError);
-      const isTimeoutError = errorType === 'TimeoutError';
-      const isJSONError = errorMessage.includes("JSON");
-
-      // Transport/timeout errors: retry same model before falling back
-      if ((isTransportError || isTimeoutError) && maxRetries > 0) {
-        console.log(`Transport/timeout error detected, retrying ${primaryModel} (${maxRetries} attempts remaining)...`);
-        try {
-          const result = await attemptGenerate(primaryModel, maxTokens, 2);
-          return { ...result, modelUsed: primaryModel };
-        } catch (retryError) {
-          console.warn(`Retry failed for ${primaryModel}: ${retryError instanceof Error ? retryError.message : "Unknown error"}`);
-          // Continue to fallback after retry failure
+      if (!response.ok) {
+        const errorBody = await response.text();
+        if (response.status === 429) {
+          throw new Error(`Rate limited`);
+        } else if (response.status >= 500) {
+          throw new Error(`Server error ${response.status}`);
+        } else {
+          throw new Error(`API error ${response.status}: ${errorBody.substring(0, 100)}`);
         }
       }
 
-      // Try fallback model if primary failed and fallback exists
-      if (fallbackModel) {
-        console.log(`Attempting fallback model: ${fallbackModel}`);
-        try {
-          const result = await attemptGenerate(fallbackModel, maxTokens, 1);
-          return { ...result, modelUsed: fallbackModel };
-        } catch (fallbackError) {
-          console.error(`Fallback model ${fallbackModel} also failed: ${fallbackError instanceof Error ? fallbackError.message : "Unknown error"}`);
-        }
+      const data = await response.json();
+      let content = data.choices[0]?.message?.content || "";
+
+      // Fix common JSON issues
+      content = this.fixJSON(content);
+
+      // Validate JSON
+      try {
+        JSON.parse(content);
+      } catch {
+        // Try aggressive fix
+        content = this.fixJSON(content, true);
+        JSON.parse(content); // Will throw if still invalid
       }
 
-      // If JSON is invalid, retry with more tokens (in case response was truncated)
-      if (isJSONError) {
-        console.warn("Initial JSON parse failed, retrying with more tokens...");
-        try {
-          const result = await attemptGenerate(primaryModel, maxTokens * 2, 1);
-          return { ...result, modelUsed: primaryModel };
-        } catch (secondError) {
-          // Try fallback with expanded tokens
-          if (fallbackModel) {
-            try {
-              const result =  await attemptGenerate(fallbackModel, maxTokens * 2, 1);
-              return { ...result, modelUsed: fallbackModel };
-            } catch (fallbackError) {
-              console.error("JSON retry also failed:", fallbackError);
-              throw new Error(`AI generation failed after JSON retry: ${secondError instanceof Error ? secondError.message : "Unknown error"}`);
-            }
-          }
-          console.error("JSON retry also failed:", secondError);
-          throw new Error(`AI generation failed after JSON retry: ${secondError instanceof Error ? secondError.message : "Unknown error"}`);
-        }
+      return {
+        content,
+        inputTokens: data.usage?.prompt_tokens || 0,
+        outputTokens: data.usage?.completion_tokens || 0,
+      };
+    } catch (error) {
+      clearTimeout(timeoutId);
+
+      if (error instanceof TypeError && error.message.includes('fetch')) {
+        const fetchError = new Error(`Network error: ${error.message}`);
+        fetchError.name = 'FetchError';
+        throw fetchError;
       }
-      throw firstError;
+
+      if (error instanceof Error && error.name === 'AbortError') {
+        const timeoutError = new Error(`Timeout after ${this.requestTimeoutMs}ms`);
+        timeoutError.name = 'TimeoutError';
+        throw timeoutError;
+      }
+
+      throw error;
     }
   }
 
-  // Helper to fix common JSON issues
+  // Fix common JSON issues
   fixJSON(str: string, aggressive: boolean = false): string {
-    // Remove trailing commas before closing braces/brackets
     str = str.replace(/,(\s*[}\]])/g, '$1');
-    
+
     if (aggressive) {
-      // Try to find and fix unterminated strings
-      // Look for patterns like "value that didn't close
       const unterminatedMatch = str.match(/"([^"\\]|\\.)*$/);
-      if (unterminatedMatch) {
-        // Find where the unterminated string starts and try to close it
+      if (unterminatedMatch && unterminatedMatch.index !== undefined) {
         const beforeUnterminated = str.substring(0, unterminatedMatch.index);
         const unterminated = unterminatedMatch[0];
-        // Try to find the proper end by looking for the next property or closing brace
         const fixed = beforeUnterminated + unterminated + '" }';
         try {
           JSON.parse(fixed);
           return fixed;
         } catch {
-          // If still invalid, return original for error propagation
+          // Return original if fix fails
         }
       }
     }
-    
+
     return str;
   }
 
@@ -245,68 +211,6 @@ export class AIService {
   calculateCost(modelType: ModelType, inputTokens: number, outputTokens: number): number {
     const costs = AI_COSTS[modelType];
     return (inputTokens / 1_000_000) * costs.input + (outputTokens / 1_000_000) * costs.output;
-  }
-
-  // Error classification helpers
-  private classifyError(status: number, errorBody: string): Error {
-    if (status >= 500) {
-      // Server-side errors (503, 504, etc.)
-      return new Error(`AI API server error: ${status} ${errorBody}`);
-    } else if (status === 429) {
-      // Rate limiting
-      return new Error(`Rate limited: ${errorBody}`);
-    } else if (status >= 400) {
-      // Client errors (401, 403, 404)
-      return new Error(`AI API client error: ${status} ${errorBody}`);
-    }
-    return new Error(`AI API unknown error: ${status} ${errorBody}`);
-  }
-
-  private isTransportError(error: any): boolean {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    return (
-      error.name === 'FetchError' ||
-      error.name === 'TimeoutError' ||
-      errorMessage.includes('fetch failed') ||
-      errorMessage.includes('network') ||
-      errorMessage.includes('connection') ||
-      errorMessage.includes('ECONN') ||
-      errorMessage.includes('socket') ||
-      errorMessage.includes('aborted') ||
-      errorMessage.includes('DNS') ||
-      errorMessage.includes('TLS')
-    );
-  }
-
-  private logAPIError(status: number, errorBody: string, model: string, attempt: number): void {
-    console.error(`[AI Error] Model: ${model}, Attempt: ${attempt}, Status: ${status}`);
-    console.error(`[AI Error] Response: ${errorBody.substring(0, 200)}${errorBody.length > 200 ? '...' : ''}`);
-    
-    // Log specific error details for debugging
-    if (errorBody.includes('rate limit')) {
-      console.error(`[AI Error] Rate limit exceeded`);
-    } else if (status === 503) {
-      console.error(`[AI Error] Service unavailable - model may be overloaded`);
-    } else if (status === 504) {
-      console.error(`[AI Error] Gateway timeout - request took too long`);
-    }
-  }
-
-  private logJSONError(content: string, model: string): void {
-    console.error(`[JSON Error] Model: ${model}`);
-    console.error(`[JSON Error] Content preview: ${content.substring(0, 100)}${content.length > 100 ? '...' : ''}`);
-    
-    // Check for common JSON issues
-    if (content.trim().endsWith(',') || content.includes(',}') || content.includes(',]')) {
-      console.error(`[JSON Error] Trailing comma detected`);
-    }
-    if (!content.trim().startsWith('{') || !content.trim().endsWith('}')) {
-      console.error(`[JSON Error] Missing JSON braces`);
-    }
-    const quoteCount = (content.match(/"/g) || []).length;
-    if (quoteCount % 2 !== 0) {
-      console.error(`[JSON Error] Unbalanced quotes (${quoteCount} quotes)`);
-    }
   }
 }
 

@@ -4,7 +4,7 @@ import { eq, and, sql } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { getProject, createAnalysisRun, updateAnalysisRun, getCompaniesByProject, getCompetitorsByProject, createFactor, createCompany, createCompetitor, createCompanyFactorScore, createNextBigThingOption, createReport } from "@/lib/services/db-service";
 import { formatDate } from "@/lib/utils/date";
-import { summaryService, analysisService, strategyService, AIService, AI_MODELS, type ModelType } from "@/lib/services/ai-service";
+import { summaryService, analysisService, strategyService, AIService, type ModelType } from "@/lib/services/ai-service";
 import { BusinessResearchSchema, CompetitorDiscoverySchema, NormalizedCompetitorSchema, AnalysisFactorSchema, CompanyScoreResultSchema, StrategyCanvasSchema, NextBigThingStrategySchema, NextBigThingResultSchema, StrategyReport, ReportSchema } from "@/lib/services/ai-service";
 import { scrapeWebsite, scrapeCompetitors, formatCompetitorInsights } from "@/lib/services/scraper-service";
 import { aggregateReviews, getCompetitorReviewInsights, formatReviewsForPrompt } from "@/lib/services/review-aggregation-service";
