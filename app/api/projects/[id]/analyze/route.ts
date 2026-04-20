@@ -1282,9 +1282,9 @@ Ensure nextBigThingOptions includes COMPLETE strategy data including difficulty 
   
   while (retryCount <= MAX_RETRIES) {
     try {
-      // Create a custom AI service instance with short timeout for Netlify compatibility
+      // Create a custom AI service instance with longer timeout for comprehensive reports
       const reportAIService = new AIService();
-      reportAIService.requestTimeoutMs = 10000; // 10 seconds - use configured timeout
+      reportAIService.requestTimeoutMs = 25000; // 25 seconds for report generation
       
       const response = await reportAIService.generateResponse([
         { role: "system", content: "You are a strategic analysis report writer. Create detailed JSON with all requested fields. Include complete strategy data including difficulty (1-10), eliminate, reduce, raise, create, targetCustomer, positioningStatement, risks (array), and operationalImplications for each strategy." },
