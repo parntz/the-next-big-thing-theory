@@ -84,8 +84,30 @@ export async function POST(
     // Update status to running
     await updateAnalysisRun(analysisRun.id, { status: "running" });
 
-    // Process the stage based on the analysis stage
+    // Track elapsed time - exit early if running low on time
     const startTime = Date.now();
+    const MAX_STAGE_TIME_MS = 24000; // 24 seconds - leave 2s buffer for Netlify limit
+
+    const checkTimeout = (stage: AnalysisStage, currentProgress: any): { timedOut: boolean; progress: any } => {
+      const elapsed = Date.now() - startTime;
+      if (elapsed > MAX_STAGE_TIME_MS) {
+        console.log(`[TIMEOUT] Stage ${stage} ran for ${elapsed}ms, saving progress and exiting early`);
+        return { timedOut: true, progress: currentProgress };
+      }
+      return { timedOut: false, progress: null };
+    };
+
+    // If we've been running too long, exit immediately
+    if (Date.now() - startTime > MAX_STAGE_TIME_MS) {
+      return NextResponse.json({
+        message: "Stage timeout - will resume on next call",
+        stage: analysisRun.stage,
+        status: "pending",
+        timedOut: true,
+      });
+    }
+
+    // Process the stage based on the analysis stage
     let resultData: any = null;
     let nextStage: AnalysisStage | null = null;
     let completed = false;
