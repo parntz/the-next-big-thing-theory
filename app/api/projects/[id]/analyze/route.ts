@@ -1276,11 +1276,51 @@ Return JSON with: title, executiveSummary (1-2 sentences), confidenceScore (0-1)
       if (retryCount > MAX_RETRIES) {
         // Final attempt failed, use fallback
         console.log("All retry attempts failed, using fallback report generation");
+        const mainCompany = {
+          name: project.name,
+          description: mainResearch?.description || businessResearch?.summary || `Analysis of ${project.name}`,
+          websiteUrl: project.websiteUrl,
+        };
+        const strengths = [...(mainResearch?.strengths || []), ...(businessResearch?.keyStrengths || [])];
+        const weaknesses = [...(mainResearch?.weaknesses || []), ...(businessResearch?.keyWeaknesses || [])];
+        
         result = {
           title: `Strategy Report for ${project.name}`,
           executiveSummary: strategies.length > 0
-            ? `Analysis identified ${strategies.length} strategic options. Key differentiators: ${[...(mainResearch?.strengths || []), ...(businessResearch?.keyStrengths || [])].slice(0, 2).join(', ')}`
+            ? `Analysis identified ${strategies.length} strategic options. Key differentiators: ${strengths.slice(0, 2).join(', ')}`
             : `Analysis of ${project.name} based on market research.`,
+          currentPositioning: {
+            mainCompany,
+            competitors: competitors.slice(0, 5).map((c: any) => ({ name: c.name || 'Unknown', description: c.description || '' })),
+            keyFindings: strengths.length > 0 
+              ? strengths.map((s: string) => `Strength: ${s}`)
+              : ["Analysis based on comprehensive market research"],
+          },
+          competitorAnalysis: {
+            marketPosition: mainResearch?.targetMarket || businessResearch?.marketPosition || "Market position analysis complete",
+            competitiveAdvantages: strengths.slice(0, 5),
+            weaknesses: weaknesses.slice(0, 5),
+          },
+          nextBigThingOptions: strategies.slice(0, 3).map((s: any, i: number) => ({
+            id: i + 1,
+            title: s.title || "Strategic Option",
+            summary: s.summary || "A strategic option for growth",
+            difficulty: s.difficulty || 5,
+            eliminate: s.eliminate || "",
+            reduce: s.reduce || "",
+            raise: s.raise || "",
+            create: s.create || "",
+            targetCustomer: s.targetCustomer || "",
+            positioningStatement: s.positioningStatement || "",
+            risks: Array.isArray(s.risks) ? s.risks : [],
+            operationalImplications: s.operationalImplications || "",
+            valueCurve: Array.isArray(s.valueCurve) ? s.valueCurve : [],
+          })),
+          recommendedStrategy: strategies.length > 0 ? {
+            id: 1,
+            title: strategies[0].title,
+            summary: strategies[0].summary,
+          } : null,
           confidenceScore: strategies.length > 0 ? 0.7 : 0.3,
         };
         break; // Exit the retry loop
