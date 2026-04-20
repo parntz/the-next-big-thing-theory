@@ -2,18 +2,6 @@
   command = "npm run build"
   publish = ".next"
 
-[functions]
-  directory = ".next/server/functions"
-  # Netlify Functions have max 26s timeout on Pro, 10s on free tier
-  # We set to 26 to maximize available time
-  timeout = 26
-
-# Redirect all API calls through Netlify Functions
-[[redirects]]
-  from = "/api/*"
-  to = "/.netlify/functions/:splat"
-  status = 200
-
 [dev]
   command = "npm run dev"
   port = 3000
