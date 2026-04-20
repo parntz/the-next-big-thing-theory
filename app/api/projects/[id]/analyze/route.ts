@@ -857,17 +857,18 @@ async function processCompanyScoring(projectId: number, project: any, previousDa
   // Include the main company in scoring
   const allCompaniesToScore = [{ name: project.name, isMain: true }, ...topCompetitors.map((c: any) => ({ name: c.name, isMain: false }))];
 
-  const prompt = `Score the following companies on each factor for "${project.name}":
+  const companyNames = allCompaniesToScore.map((c: any) => c.name);
+  const prompt = `Score ALL ${companyNames.length} companies listed below on each factor for "${project.name}".
 
-  Factors: ${factorsList.map((f: any) => f.name).join(", ")}
-  Companies: ${allCompaniesToScore.map((c: any) => c.name).join(", ")}
+CRITICAL: You MUST return a "scores" array with an entry for EVERY company listed. Do NOT skip any company.
 
-  For each company, provide scores (0-10) for each factor with confidence levels and evidence.
+Companies to score: ${companyNames.join(", ")}
 
-  Return JSON with "scores" array containing company scores.`;
+Factors: ${factorsList.map((f: any) => f.name).join(", ")}
 
-  console.log("  Prompt factors list:", factorsList.map((f: any) => f.name).filter(Boolean).join(", "));
-  console.log("  Prompt competitors list:", allCompaniesToScore.map((c: any) => c.name).join(", "));
+For EACH company above, provide scores (0-10) for EACH factor listed.
+
+Return JSON with "scores" array containing ${companyNames.length} entries, one per company. Each entry must have the companyName field.`;
 
   let content: string;
   let result: any;
@@ -1105,9 +1106,9 @@ Return JSON with 'strategies' array containing 2 objects with: title, summary, e
       nextBigThingAIService.requestTimeoutMs = 10000; // 10 seconds - use configured timeout
       
       const response = await nextBigThingAIService.generateResponse([
-        { role: "system", content: "You are a strategy expert. Create concise JSON with 'strategies' array. Each strategy has: title, summary, eliminate, reduce, raise, create, difficulty (1-10). Be concise." },
+        { role: "system", content: "You are a strategy expert. Create JSON with 'strategies' array. EACH strategy must include ALL of these fields: title, summary, eliminate, reduce, raise, create, difficulty (1-10), targetCustomer, positioningStatement, risks (array), operationalImplications, valueCurve (array of {factor, currentScore, proposedScore}). Be complete and thorough." },
         { role: "user", content: prompt },
-      ], 0.7, 1500, "strategy"); // Reduced tokens for faster response
+      ], 0.7, 2500, "strategy"); // More tokens for complete strategy data
       content = response.content;
       result = JSON.parse(content);
       break; // Success, exit retry loop
@@ -1128,12 +1129,12 @@ Return JSON with 'strategies' array containing 2 objects with: title, summary, e
               reduce: "Average service levels",
               raise: "Customer experience above industry standard",
               create: "Unique value proposition",
-              targetCustomer: "Target customer segment based on business type",
-              positioningStatement: "For customers seeking differentiated experience",
-              risks: ["Implementation challenges", "Market acceptance uncertainty"],
               difficulty: 6,
-              operationalImplications: "Requires strategic investments in customer experience",
-              revenuePotential: "Moderate to high potential",
+              targetCustomer: "Enterprise customers seeking premium domain services",
+              positioningStatement: "For customers seeking differentiated domain registration experience",
+              risks: ["Implementation challenges", "Market acceptance uncertainty"],
+              operationalImplications: "Requires investment in customer experience improvements",
+              valueCurve: [],
             }
           ]
         };
