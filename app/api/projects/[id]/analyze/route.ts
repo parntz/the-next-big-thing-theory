@@ -1080,21 +1080,10 @@ async function processNextBigThing(projectId: number, project: any, previousData
     project.websiteUrl && `Website: ${project.websiteUrl}`,
   ].filter(Boolean).join('\n');
 
-  const prompt = `Create "Next Big Thing" strategy options for "${project.name}".
-
-**BUSINESS CONTEXT:** ${project.notes || 'No description provided'}
-
-**RESEARCH SUMMARY:**
-- Company: ${mainResearch.description || businessResearch.summary || project.name}
-- Market Position: ${mainResearch.targetMarket || businessResearch.marketPosition || 'N/A'}
-- Strengths: ${[...(mainResearch.strengths || []), ...(businessResearch.keyStrengths || [])].slice(0, 3).join(", ")}
-- Weaknesses: ${[...(mainResearch.weaknesses || []), ...(businessResearch.keyWeaknesses || [])].slice(0, 3).join(", ")}
-- Competitors: ${competitorInsights ? 'Analyzed' : 'Not available'}
-- Key Factors: ${factorsList.map((f: any) => f.name).join(", ") || 'N/A'}
-
-**TASK:** Create 2-3 breakthrough strategy options using ERRC (Eliminate, Reduce, Raise, Create). Each should include: title, summary, eliminate, reduce, raise, create, valueCurve, targetCustomer, positioningStatement, risks, difficulty, operationalImplications.
-
-Return JSON with 'strategy_options' or 'strategies' array.`;
+  const prompt = `Create 2 short strategy options for "${project.name}".
+Context: ${(project.notes || '').slice(0, 200)}
+Position: ${mainResearch.targetMarket || businessResearch.marketPosition || 'N/A'}
+Return JSON with 'strategies' array containing 2 objects with: title, summary, eliminate, reduce, raise, create, difficulty (1-10).`;
 
   let content: string;
   let result: any;
@@ -1104,14 +1093,14 @@ Return JSON with 'strategy_options' or 'strategies' array.`;
   
   while (retryCount <= MAX_RETRIES) {
     try {
-      // Create a custom AI service instance with extended timeout for next big thing
+      // Create a custom AI service instance with short timeout for Netlify compatibility
       const nextBigThingAIService = new AIService();
-      nextBigThingAIService.requestTimeoutMs = 90000; // 90 seconds
+      nextBigThingAIService.requestTimeoutMs = 7000; // 7 seconds - safe for Netlify free tier
       
       const response = await nextBigThingAIService.generateResponse([
-        { role: "system", content: "You are a creative strategy expert. Generate DIVERSE, INNOVATIVE Next Big Thing strategies using the ERRC framework (Eliminate, Reduce, Raise, Create). Provide 2-3 distinctly different strategic directions. Be bold and creative. IMPORTANT: Respond with valid JSON only, with a 'strategy_options' or 'strategies' or 'nextBigThingOptions' array containing objects with ALL of these fields: title, summary, eliminate, reduce, raise, create, valueCurve, targetCustomer, positioningStatement, risks, difficulty, operationalImplications." },
+        { role: "system", content: "You are a strategy expert. Create concise JSON with 'strategies' array. Each strategy has: title, summary, eliminate, reduce, raise, create, difficulty (1-10). Be concise." },
         { role: "user", content: prompt },
-      ], 0.8, 5000, "strategy");
+      ], 0.7, 1500, "strategy"); // Reduced tokens for faster response
       content = response.content;
       result = JSON.parse(content);
       break; // Success, exit retry loop
@@ -1255,51 +1244,11 @@ Operational Implications: ${s.operationalImplications || 'Not specified'}
 
   const competitorsText = competitors.length > 0 ? competitors.map((c: any) => `- ${c.name || 'Unknown'}: ${c.description || 'Description not available'}`).join('\n') : 'No competitor data available';
 
-  const prompt = `Create a strategic analysis report for "${project.name}" based on comprehensive research:
-
-**RESEARCH SUMMARY:**
-- Company: ${mainResearch.description || businessResearch.summary || project.name}
-- Market: ${mainResearch.targetMarket || businessResearch.targetMarket || 'N/A'}
-- Key Strengths: ${[...(mainResearch.strengths || []), ...(businessResearch.keyStrengths || [])].slice(0, 3).join(", ")}
-- Key Weaknesses: ${[...(mainResearch.weaknesses || []), ...(businessResearch.keyWeaknesses || [])].slice(0, 3).join(", ")}
-- Competitors: ${competitors.slice(0, 3).map((c: any) => c.name).join(", ")}
-- Customer Sentiment: ${previousData?.mainReviewsText ? 'Available' : 'Not available'}
-- Strategic Options: ${strategies.length} options developed
-
-
-**TASK:** Synthesize this research into a comprehensive strategic report with:
-- Executive summary
-- Current positioning analysis
-- Competitor comparison
-- Strategic recommendations
-- Implementation guidance
-
-Return JSON with:
-{
-  "title": "Strategic Analysis Report for [Company Name]",
-  "executiveSummary": "2-3 sentence executive summary of the analysis and key recommendation",
-  "currentPositioning": {
-    "mainCompany": { "name": "...", "description": "...", "websiteUrl": "..." },
-    "competitors": [{ "name": "...", "description": "..." }],
-    "keyFindings": ["...", "..."]
-  },
-  "competitorAnalysis": {
-    "marketPosition": "Description of market position",
-    "competitiveAdvantages": ["...", "..."],
-    "weaknesses": ["...", "..."]
-  },
-  "nextBigThingOptions": [
-    { "id": 1, "title": "...", "summary": "...", "difficulty": 5, "eliminate": "...", "reduce": "...", "raise": "...", "create": "...", "targetCustomer": "...", "positioningStatement": "...", "risks": [...], "operationalImplications": "...", "valueCurve": [...] }
-  ],
-  "recommendedStrategy": {
-    "id": 1,
-    "title": "...",
-    "summary": "..."
-  },
-  "confidenceScore": 0.85
-}
-
-Return ONLY valid JSON, no additional text.`;
+  const prompt = `Create a short strategic report for "${project.name}".
+Company: ${mainResearch.description || businessResearch.summary || project.name}
+Market: ${mainResearch.targetMarket || 'N/A'}
+Strategies: ${strategies.slice(0, 2).map((s: any) => s.title || 'Strategy').join(', ')}
+Return JSON with: title, executiveSummary (1-2 sentences), confidenceScore (0-1).`;
 
   let content: string;
   let result: any;
@@ -1309,14 +1258,14 @@ Return ONLY valid JSON, no additional text.`;
   
   while (retryCount <= MAX_RETRIES) {
     try {
-      // Create a custom AI service instance with extended timeout for report assembly
+      // Create a custom AI service instance with short timeout for Netlify compatibility
       const reportAIService = new AIService();
-      reportAIService.requestTimeoutMs = 90000; // 90 seconds for report assembly
+      reportAIService.requestTimeoutMs = 7000; // 7 seconds - safe for Netlify free tier
       
       const response = await reportAIService.generateResponse([
-        { role: "system", content: "You are a strategic analysis report writer. Synthesize all provided research into a comprehensive, actionable strategic report. Be analytical yet creative in your synthesis. Identify patterns and insights across all data sources. Always respond with valid JSON only." },
+        { role: "system", content: "You are a strategic analysis report writer. Create concise JSON with: title, executiveSummary (1-2 sentences), confidenceScore (0-1). Be concise." },
         { role: "user", content: prompt },
-      ], 0.75, 6000, "strategy");
+      ], 0.7, 800, "strategy"); // Reduced tokens for faster response
       content = response.content;
       result = JSON.parse(content);
       break; // Success, exit retry loop
@@ -1327,51 +1276,11 @@ Return ONLY valid JSON, no additional text.`;
       if (retryCount > MAX_RETRIES) {
         // Final attempt failed, use fallback
         console.log("All retry attempts failed, using fallback report generation");
-        // Build a report from available data if AI fails - include ALL deep research
-        const mainCompany = {
-          name: project.name,
-          description: mainResearch?.description || businessResearch?.summary || `Strategic analysis for ${project.name}`,
-          websiteUrl: project.websiteUrl,
-        };
         result = {
           title: `Strategy Report for ${project.name}`,
           executiveSummary: strategies.length > 0
-            ? `Analysis identified ${strategies.length} strategic options for ${project.name}. Key differentiators identified through deep research.`
-            : `Comprehensive analysis of ${project.name} based on competitor research and market factors.`,
-          currentPositioning: {
-            mainCompany,
-            competitors: (competitorInsights ? competitorInsights.split('\n').slice(0, 5) : competitors.slice(0, 5)).map((c: any) => typeof c === 'string' ? { name: c } : c),
-            keyFindings: mainResearch?.strengths?.length > 0 
-              ? mainResearch.strengths.map((s: string) => `Strength: ${s}`)
-              : (strategies.length > 0 
-                ? strategies.map((s: any) => `Strategy "${s.title}": ${s.summary}`)
-                : ["Analysis based on comprehensive market research"]),
-          },
-          competitorAnalysis: {
-            marketPosition: mainResearch?.targetMarket || businessResearch?.marketPosition || "Market position analysis complete",
-            competitiveAdvantages: [...(mainResearch?.strengths || []), ...(businessResearch?.keyStrengths || [])].slice(0, 5),
-            weaknesses: [...(mainResearch?.weaknesses || []), ...(businessResearch?.keyWeaknesses || [])].slice(0, 5),
-          },
-          nextBigThingOptions: strategies.slice(0, 3).map((s: any, i: number) => ({
-            id: i + 1,
-            title: s.title || "Strategic Option",
-            summary: s.summary || "A strategic option for growth",
-            eliminate: s.eliminate || "",
-            reduce: s.reduce || "",
-            raise: s.raise || "",
-            create: s.create || "",
-            targetCustomer: s.targetCustomer || "",
-            positioningStatement: s.positioningStatement || "",
-            risks: Array.isArray(s.risks) ? s.risks : [],
-            difficulty: s.difficulty || 5,
-            operationalImplications: s.operationalImplications || "",
-            valueCurve: Array.isArray(s.valueCurve) ? s.valueCurve : [],
-          })),
-          recommendedStrategy: strategies.length > 0 ? {
-            id: 1,
-            title: strategies[0].title,
-            summary: strategies[0].summary,
-          } : null,
+            ? `Analysis identified ${strategies.length} strategic options. Key differentiators: ${[...(mainResearch?.strengths || []), ...(businessResearch?.keyStrengths || [])].slice(0, 2).join(', ')}`
+            : `Analysis of ${project.name} based on market research.`,
           confidenceScore: strategies.length > 0 ? 0.7 : 0.3,
         };
         break; // Exit the retry loop
