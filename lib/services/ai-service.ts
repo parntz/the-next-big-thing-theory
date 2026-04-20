@@ -7,13 +7,12 @@ import { z } from "zod";
 // System tries models in order, cascading through fallbacks on failure
 
 // Strategy tasks need highest quality reasoning
+// Removed models that return 404: google/*, anthropic/*, moonshotai/Kimi-K2.5
 const STRATEGY_TIER = [
   "deepseek-ai/DeepSeek-V3.1",
   "Qwen/Qwen3-Coder-Next-FP8",
   "MiniMaxAI/MiniMax-M2.7",
-  "google/gemini-1.5-pro",
-  "moonshotai/Kimi-K2.5",
-  "anthropic/claude-3.5-sonnet",
+  "meta-llama/Llama-3.3-70B-Instruct",
 ];
 
 // Analysis tasks need balanced reasoning
@@ -21,18 +20,13 @@ const ANALYSIS_TIER = [
   "Qwen/Qwen3-Coder-Next-FP8",
   "MiniMaxAI/MiniMax-M2.7",
   "deepseek-ai/DeepSeek-V3.1",
-  "google/gemini-1.5-flash",
-  "moonshotai/Kimi-K2.5",
-  "anthropic/claude-3.5-haiku",
+  "meta-llama/Llama-3.3-70B-Instruct",
 ];
 
 // Summary tasks need fast, concise responses
 const SUMMARY_TIER = [
   "Qwen/Qwen3-Coder-Next-FP8",
-  "google/gemini-1.5-flash",
   "MiniMaxAI/MiniMax-M2.7",
-  "moonshotai/Kimi-K2.5",
-  "anthropic/claude-3.5-haiku",
   "meta-llama/Llama-3.3-70B-Instruct",
 ];
 
@@ -68,7 +62,7 @@ export class AIService {
       console.warn("TOGETHER_API_KEY not set. AI functionality will be limited.");
     }
     this.apiUrl = "https://api.together.xyz/v1/chat/completions";
-    this.requestTimeoutMs = parseInt(process.env.AI_REQUEST_TIMEOUT_MS || "10000"); // 10s default
+    this.requestTimeoutMs = parseInt(process.env.AI_REQUEST_TIMEOUT_MS || "15000"); // 15s default
   }
 
   // Generate response with dynamic model fallback cascading through 6 models
