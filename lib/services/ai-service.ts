@@ -7,12 +7,11 @@ import { z } from "zod";
 // System tries models in order, cascading through fallbacks on failure
 
 // Strategy tasks need highest quality reasoning
-// Removed models that return 404: google/*, anthropic/*, moonshotai/Kimi-K2.5
+// Removed models that return errors: google/*, anthropic/*, moonshotai/Kimi-K2.5, meta-llama/* (not serverless)
 const STRATEGY_TIER = [
   "deepseek-ai/DeepSeek-V3.1",
   "Qwen/Qwen3-Coder-Next-FP8",
   "MiniMaxAI/MiniMax-M2.7",
-  "meta-llama/Llama-3.3-70B-Instruct",
 ];
 
 // Analysis tasks need balanced reasoning
@@ -20,14 +19,13 @@ const ANALYSIS_TIER = [
   "Qwen/Qwen3-Coder-Next-FP8",
   "MiniMaxAI/MiniMax-M2.7",
   "deepseek-ai/DeepSeek-V3.1",
-  "meta-llama/Llama-3.3-70B-Instruct",
 ];
 
 // Summary tasks need fast, concise responses
 const SUMMARY_TIER = [
   "Qwen/Qwen3-Coder-Next-FP8",
   "MiniMaxAI/MiniMax-M2.7",
-  "meta-llama/Llama-3.3-70B-Instruct",
+  "deepseek-ai/DeepSeek-V3.1",
 ];
 
 export type ModelType = "summary" | "analysis" | "strategy";
