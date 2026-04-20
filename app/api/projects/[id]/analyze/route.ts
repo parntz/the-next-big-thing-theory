@@ -1240,15 +1240,39 @@ Difficulty: ${s.difficulty || 5}/10
 Operational Implications: ${s.operationalImplications || 'Not specified'}
 `).join('\n') : 'No strategy options available';
 
-  const scoresText = companyScores.length > 0 ? companyScores.map((c: any) => `- ${c.companyName || 'Unknown'}`).join('\n') : 'No scores available';
-
   const competitorsText = competitors.length > 0 ? competitors.map((c: any) => `- ${c.name || 'Unknown'}: ${c.description || 'Description not available'}`).join('\n') : 'No competitor data available';
 
-  const prompt = `Create a short strategic report for "${project.name}".
+  const strengths = [...(mainResearch?.strengths || []), ...(businessResearch?.keyStrengths || [])];
+  const weaknesses = [...(mainResearch?.weaknesses || []), ...(businessResearch?.keyWeaknesses || [])];
+  const marketPosition = mainResearch?.targetMarket || businessResearch?.marketPosition || 'Market position analysis in progress';
+
+  const prompt = `Create a comprehensive strategic report for "${project.name}".
 Company: ${mainResearch.description || businessResearch.summary || project.name}
-Market: ${mainResearch.targetMarket || 'N/A'}
-Strategies: ${strategies.slice(0, 2).map((s: any) => s.title || 'Strategy').join(', ')}
-Return JSON with: title, executiveSummary (1-2 sentences), confidenceScore (0-1).`;
+Website: ${project.websiteUrl || 'N/A'}
+Market Position: ${marketPosition}
+
+Key Strengths:
+${strengths.length > 0 ? strengths.map((s: string) => `- ${s}`).join('\n') : '- Analysis in progress'}
+
+Key Weaknesses:
+${weaknesses.length > 0 ? weaknesses.map((w: string) => `- ${w}`).join('\n') : '- Analysis in progress'}
+
+Competitors:
+${competitorsText}
+
+Strategies Generated:
+${strategiesText}
+
+Return a complete JSON report with ALL of these fields:
+- title: Report title
+- executiveSummary: 2-3 sentence summary of findings and recommendations
+- currentPositioning: { mainCompany: {name, description, websiteUrl}, competitors: [{name, description}], keyFindings: [strings] }
+- competitorAnalysis: { marketPosition: string, competitiveAdvantages: [strings], weaknesses: [strings] }
+- nextBigThingOptions: array of strategy objects (include all strategies above with all their fields)
+- recommendedStrategy: the first/best strategy from nextBigThingOptions
+- confidenceScore: number 0-1
+
+Ensure nextBigThingOptions includes COMPLETE strategy data including difficulty (1-10), eliminate, reduce, raise, create, targetCustomer, positioningStatement, risks array, and operationalImplications.`;
 
   let content: string;
   let result: any;
@@ -1263,9 +1287,9 @@ Return JSON with: title, executiveSummary (1-2 sentences), confidenceScore (0-1)
       reportAIService.requestTimeoutMs = 10000; // 10 seconds - use configured timeout
       
       const response = await reportAIService.generateResponse([
-        { role: "system", content: "You are a strategic analysis report writer. Create concise JSON with: title, executiveSummary (1-2 sentences), confidenceScore (0-1). Be concise." },
+        { role: "system", content: "You are a strategic analysis report writer. Create detailed JSON with all requested fields. Include complete strategy data including difficulty (1-10), eliminate, reduce, raise, create, targetCustomer, positioningStatement, risks (array), and operationalImplications for each strategy." },
         { role: "user", content: prompt },
-      ], 0.7, 800, "strategy"); // Reduced tokens for faster response
+      ], 0.7, 2000, "strategy"); // More tokens for comprehensive report
       content = response.content;
       result = JSON.parse(content);
       break; // Success, exit retry loop
