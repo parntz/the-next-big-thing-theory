@@ -1095,7 +1095,7 @@ Return JSON with 'strategies' array containing 2 objects with: title, summary, e
     try {
       // Create a custom AI service instance with short timeout for Netlify compatibility
       const nextBigThingAIService = new AIService();
-      nextBigThingAIService.requestTimeoutMs = 7000; // 7 seconds - safe for Netlify free tier
+      nextBigThingAIService.requestTimeoutMs = 10000; // 10 seconds - use configured timeout
       
       const response = await nextBigThingAIService.generateResponse([
         { role: "system", content: "You are a strategy expert. Create concise JSON with 'strategies' array. Each strategy has: title, summary, eliminate, reduce, raise, create, difficulty (1-10). Be concise." },
@@ -1260,7 +1260,7 @@ Return JSON with: title, executiveSummary (1-2 sentences), confidenceScore (0-1)
     try {
       // Create a custom AI service instance with short timeout for Netlify compatibility
       const reportAIService = new AIService();
-      reportAIService.requestTimeoutMs = 7000; // 7 seconds - safe for Netlify free tier
+      reportAIService.requestTimeoutMs = 10000; // 10 seconds - use configured timeout
       
       const response = await reportAIService.generateResponse([
         { role: "system", content: "You are a strategic analysis report writer. Create concise JSON with: title, executiveSummary (1-2 sentences), confidenceScore (0-1). Be concise." },
