@@ -44,3 +44,11 @@ coverage/
 # Misc
 *.tsbuildinfo
 next-env.d.ts
+
+# Local utility scripts
+add-user.ts
+check-users.ts
+delete-users.ts
+test-auth.ts
+test-auth.mjs
+add-turso-columns-drizzle.cjs
