@@ -6,7 +6,7 @@ import { getProject, createAnalysisRun, updateAnalysisRun, getCompaniesByProject
 import { formatDate } from "@/lib/utils/date";
 import { summaryService, analysisService, strategyService, AIService, type ModelType } from "@/lib/services/ai-service";
 import { BusinessResearchSchema, CompetitorDiscoverySchema, NormalizedCompetitorSchema, AnalysisFactorSchema, CompanyScoreResultSchema, StrategyCanvasSchema, NextBigThingStrategySchema, NextBigThingResultSchema, StrategyReport, ReportSchema } from "@/lib/services/ai-service";
-import { scrapeWebsite, scrapeCompetitors, formatCompetitorInsights } from "@/lib/services/scraper-service";
+import { scrapeWebsite, scrapeCompetitors, formatCompetitorInsights, validateCompetitorRelevance, checkUrlLive } from "@/lib/services/scraper-service";
 import { aggregateReviews, getCompetitorReviewInsights, formatReviewsForPrompt } from "@/lib/services/review-aggregation-service";
 
 // Analysis stages - extended with deep research
@@ -14,9 +14,10 @@ type AnalysisStage =
   | "business_research"
   | "competitor_discovery"
   | "competitor_normalization"
-  | "deep_main_research"        // NEW: Deep dive on main company
-  | "deep_competitor_research"  // NEW: Deep dive on competitors
-  | "review_aggregation"        // NEW: Aggregate reviews from multiple sources
+  | "deep_main_research"        // Deep dive on main company
+  | "deep_competitor_research"  // Initial deep dive on competitors
+  | "competitor_selection"      // NEW: Deep website reading & selection of top 6
+  | "review_aggregation"        // Aggregate reviews from multiple sources
   | "factor_generation"
   | "company_scoring"
   | "strategy_canvas"
@@ -138,6 +139,12 @@ export async function POST(
         case "deep_competitor_research":
           console.log("=== STAGE: Deep Competitor Website Research ===");
           resultData = await processDeepCompetitorResearch(id, project, analysisRun.inputData);
+          nextStage = "competitor_selection";
+          break;
+
+        case "competitor_selection":
+          console.log("=== STAGE: Competitor Selection & Deep Website Reading ===");
+          resultData = await processCompetitorSelection(id, project, analysisRun.inputData);
           nextStage = "review_aggregation";
           break;
 
@@ -351,9 +358,15 @@ async function processCompetitorDiscovery(projectId: number, project: any, previ
 
   const prompt = `For the business: ${projectDetails}
 
+  **CRITICAL: This business is located in ${project.region || 'an unspecified location'}. You MUST find competitors that are located in the SAME REGION/area.**
+
+  **DO NOT find competitors that are in a different state, city, or region unless explicitly stated.**
+
   **CRITICAL: The description/notes above define exactly what this business is. Find competitors that compete with THIS SPECIFIC BUSINESS, not generic industry players.**
 
   **IMPORTANT: If the description says "mens clothing store", look for other MENS CLOTHING stores. NOT pet stores, not women's clothing, not general fashion.**
+
+  **CRITICAL: The businesses must be in the SAME region and directly compete with this business. Do NOT include businesses from other regions.**
 
   **EVEN MORE IMPORTANT: You MUST find and return the actual website URL for each competitor. Do NOT leave websiteUrl blank. If you cannot find a competitor's website, search for it by name. Every competitor MUST have a valid website URL starting with http:// or https://.**
 
@@ -363,6 +376,7 @@ async function processCompetitorDiscovery(projectId: number, project: any, previ
   - Price point and positioning
   - Target customer demographic
   - Business model (D2C, subscription, etc.)
+  - **LOCATION: Must be in the same region as the target business**
 
   For each competitor, research and return:
   - Name
@@ -401,7 +415,76 @@ async function processCompetitorDiscovery(projectId: number, project: any, previ
     });
   }
   
+  // First, verify each competitor URL is actually live before saving
+  const liveCompetitors: Array<any> = [];
+  
   for (const competitor of result.competitors || []) {
+    if (competitor.websiteUrl && competitor.websiteUrl.startsWith("http")) {
+      console.log(`=== COMPETITOR DISCOVERY: Checking URL liveness for ${competitor.name}: ${competitor.websiteUrl} ===`);
+      const urlCheck = await checkUrlLive(competitor.websiteUrl);
+      
+      if (urlCheck.isLive) {
+        console.log(`=== COMPETITOR DISCOVERY: URL is LIVE (${urlCheck.statusCode}) - adding ${competitor.name} ===`);
+        liveCompetitors.push(competitor);
+      } else {
+        console.log(`=== COMPETITOR DISCOVERY: URL is DEAD (${urlCheck.statusCode}) - "${competitor.name}" rejected ===`);
+      }
+    } else {
+      console.log(`=== COMPETITOR DISCOVERY: No URL provided - "${competitor.name}" rejected ===`);
+    }
+    
+    // Rate limiting between URL checks
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+  
+  // If we have fewer than 6 live competitors, ask AI to find replacements
+  if (liveCompetitors.length < 6) {
+    console.log(`=== COMPETITOR DISCOVERY: Only ${liveCompetitors.length} live competitors, finding ${6 - liveCompetitors.length} more ===`);
+    
+    const liveNames = liveCompetitors.map(c => c.name).join(", ");
+    const replacementPrompt = `For the business: ${projectDetails}
+    
+You already found these competitors with LIVE websites: ${liveNames}
+But we need ${6 - liveCompetitors.length} MORE competitors that:
+1. Have ACTIVE, LIVE websites (we verified they work)
+2. DIRECTLY compete with the business above
+3. Are in the SAME industry/business type
+
+Find ${6 - liveCompetitors.length} more competitors with real, working websites.
+Each MUST have a websiteUrl that you KNOW FOR CERTAIN is live and active.
+
+Return JSON with "competitors" array: name, description, websiteUrl`;
+
+    try {
+      const { content } = await summaryService.generateResponse([
+        { role: "system", content: "You are a market research analyst. Find competitors in JSON format. Only include competitors you know have active websites. Always respond with valid JSON only." },
+        { role: "user", content: replacementPrompt }
+      ], 0.3, 3000, "summary");
+      
+      const replacementResult = JSON.parse(content);
+      
+      for (const replacement of replacementResult.competitors || []) {
+        if (replacement.websiteUrl) {
+          const urlCheck = await checkUrlLive(replacement.websiteUrl);
+          if (urlCheck.isLive) {
+            console.log(`=== COMPETITOR DISCOVERY: Found replacement "${replacement.name}" with live URL ===`);
+            liveCompetitors.push(replacement);
+          } else {
+            console.log(`=== COMPETITOR DISCOVERY: Replacement "${replacement.name}" URL is dead, skipping ===`);
+          }
+        }
+        
+        if (liveCompetitors.length >= 6) break;
+        
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    } catch (e) {
+      console.error("=== COMPETITOR DISCOVERY: Failed to find replacement competitors ===", e);
+    }
+  }
+  
+  // Now save only the live competitors
+  for (const competitor of liveCompetitors) {
     // Insert into competitors table
     const newCompetitor = await db.insert(schema.competitors).values({
       projectId,
@@ -430,6 +513,8 @@ async function processCompetitorDiscovery(projectId: number, project: any, previ
       });
     }
   }
+  
+  console.log(`=== COMPETITOR DISCOVERY: Saved ${liveCompetitors.length} competitors with verified live URLs ===`);
 
   return { ...result, ...previousData };
 }
@@ -453,20 +538,26 @@ async function processCompetitorNormalization(projectId: number, project: any, p
     console.log(`=== COMPETITOR NORMALIZATION: Have ${competitors.length} with URLs, need ${6 - competitors.length} more — fetching more ===`);
 
     const prompt = `For the business: ${project.name} (${project.notes || project.category || "no description"})
+Region: ${project.region || 'Not specified'}
 
 You already know about: ${Array.from(allCompetitorNames).join(", ")}
 
-Find ${6 - competitors.length} MORE direct competitors that have publicly accessible websites.
+Find ${6 - competitors.length} MORE direct competitors that have ACTIVE, LIVE websites.
 Each competitor MUST have:
-- A real, working website URL (we will scrape it — no URL means the competitor is excluded)
+- A real, working website URL that you KNOW IS ACTIVE (we will verify with a live check)
 - A description of what they sell
 - Direct competition with the business above
+- **Same region/area as the target business**
+
+CRITICAL: Do NOT include competitors from different regions unless they explicitly serve this region.
+
+IMPORTANT: Only include competitors with websites that are currently live and accessible. We will verify each URL.
 
 Return a JSON "competitors" array with: name, description, websiteUrl
 Do NOT repeat any competitor already listed above.`;
 
     const { content } = await summaryService.generateResponse([
-      { role: "system", content: "You are a market research analyst. Identify competitors in JSON format. Always respond with valid JSON only." },
+      { role: "system", content: "You are a market research analyst. Find competitors in JSON format. Only include competitors with verified active websites. Always respond with valid JSON only." },
       { role: "user", content: prompt },
     ], 0.3, 3000, "summary");
 
@@ -477,9 +568,19 @@ Do NOT repeat any competitor already listed above.`;
           c.websiteUrl && c.websiteUrl.startsWith("http") &&
           !allCompetitorNames.has(c.name)
         ) {
-          allCompetitorNames.add(c.name);
-          competitors.push(c);
+          // Verify URL is actually live before adding
+          const urlCheck = await checkUrlLive(c.websiteUrl);
+          if (urlCheck.isLive) {
+            console.log(`=== COMPETITOR NORMALIZATION: Verified live URL for "${c.name}" ===`);
+            allCompetitorNames.add(c.name);
+            competitors.push(c);
+          } else {
+            console.log(`=== COMPETITOR NORMALIZATION: URL dead for "${c.name}" (${urlCheck.statusCode}), skipping ===`);
+          }
         }
+        
+        // Rate limiting
+        await new Promise(resolve => setTimeout(resolve, 500));
       }
     } catch (e) {
       console.error("=== COMPETITOR NORMALIZATION: Failed to parse extra competitors ===", e);
@@ -617,8 +718,9 @@ ${project.region ? `Region: ${project.region}` : ''}
 async function processDeepCompetitorResearch(projectId: number, project: any, previousData: any): Promise<any> {
   console.log("=== DEEP COMPETITOR RESEARCH: Starting deep dive into competitor websites ===");
 
+  // Get ALL competitors for initial deep dive (this is before selection)
   const competitors = previousData?.competitors || [];
-  const topCompetitors = competitors.slice(0, 6); // Limit to top 6
+  const topCompetitors = competitors.slice(0, 6); // Use top 6 from normalization for initial deep dive
 
   if (topCompetitors.length === 0) {
     console.log("=== DEEP COMPETITOR RESEARCH: No competitors found, skipping ===");
@@ -675,11 +777,91 @@ ${project.region ? `Region: ${project.region}` : ''}
 
   try {
     const results = await scrapeCompetitors(topCompetitors, businessContext);
+    
+    // Validate each competitor - ensure they actually match the business type
+    const validatedCompetitors: Array<{name: string, websiteUrl: string, description?: string, isValid: boolean, reason?: string}> = [];
+    const invalidCompetitorNames: string[] = [];
+    
+    for (const competitor of topCompetitors) {
+      if (competitor.websiteUrl) {
+        const result = results.get(competitor.name);
+        if (result?.success) {
+          const validation = await validateCompetitorRelevance(competitor.name, result, businessContext);
+          if (validation.isRelevant) {
+            validatedCompetitors.push({ ...competitor, isValid: true });
+          } else {
+            console.log(`=== DEEP COMPETITOR RESEARCH: REJECTED "${competitor.name}" - ${validation.reason} ===`);
+            invalidCompetitorNames.push(competitor.name);
+          }
+        } else {
+          // Scrape failed - reject it
+          invalidCompetitorNames.push(competitor.name);
+        }
+      } else {
+        // No URL - reject it
+        invalidCompetitorNames.push(competitor.name);
+      }
+    }
+    
+    // If we rejected any competitors, find replacements
+    if (invalidCompetitorNames.length > 0) {
+      console.log(`=== DEEP COMPETITOR RESEARCH: Found ${invalidCompetitorNames.length} invalid competitors, finding replacements ===`);
+      
+      const replacementPrompt = `For the business: ${project.name} (${project.notes || project.category || "no description"})
+        
+You previously identified these competitors but they were REJECTED because they don't actually compete with this business:
+${invalidCompetitorNames.join(", ")}
+
+We need ${invalidCompetitorNames.length} REPLACEMENT competitors that:
+1. DIRECTLY compete with this specific business (same products/services, same target market)
+2. Have real, working website URLs (we will scrape them)
+3. Are actual competitors - NOT keyword matches or unrelated businesses
+
+Return a JSON "competitors" array with: name, description, websiteUrl
+Each competitor MUST have a valid URL starting with http:// or https://`;
+
+      try {
+        const { content } = await summaryService.generateResponse([
+          { role: "system", content: "You are a market research analyst. Find replacement competitors in JSON format. Always respond with valid JSON only." },
+          { role: "user", content: replacementPrompt }
+        ], 0.3, 3000, "summary");
+        
+        const replacementResult = JSON.parse(content);
+        
+        // Scrape the replacement competitors
+        for (const replacement of replacementResult.competitors || []) {
+          if (replacement.websiteUrl && replacement.websiteUrl.startsWith("http")) {
+            try {
+              const scrapeResult = await scrapeWebsite(replacement.websiteUrl, replacement.name, businessContext);
+              if (scrapeResult.success) {
+                const validation = await validateCompetitorRelevance(replacement.name, scrapeResult, businessContext);
+                if (validation.isRelevant) {
+                  console.log(`=== DEEP COMPETITOR RESEARCH: Adding replacement "${replacement.name}" ===`);
+                  validatedCompetitors.push({
+                    name: replacement.name,
+                    websiteUrl: replacement.websiteUrl,
+                    description: replacement.description,
+                    isValid: true
+                  });
+                } else {
+                  console.log(`=== DEEP COMPETITOR RESEARCH: Replacement "${replacement.name}" also rejected: ${validation.reason} ===`);
+                }
+              }
+            } catch (e) {
+              console.log(`=== DEEP COMPETITOR RESEARCH: Failed to scrape replacement "${replacement.name}" ===`);
+            }
+          }
+        }
+      } catch (e) {
+        console.error("=== DEEP COMPETITOR RESEARCH: Failed to find replacement competitors ===", e);
+      }
+    }
+    
     const competitorInsights = formatCompetitorInsights(results);
     const db = getDb();
 
-    // Update competitors in DB with discovered URLs from scraping
-    for (const competitor of topCompetitors) {
+    // Update competitors in DB with validated results
+    for (const competitor of validatedCompetitors) {
       if (competitor.websiteUrl) {
         const result = results.get(competitor.name);
         if (result?.success) {
@@ -706,28 +888,25 @@ ${project.region ? `Region: ${project.region}` : ''}
             )
           );
         }
-      } else {
-        // No URL was provided, try to derive it from the scrape result content
-        const result = results.get(competitor.name);
-        if (result?.success) {
-          const desc = result.content.description || competitor.description || "";
-          await db.update(schema.competitors).set({
-            description: desc,
-          }).where(
-            and(
-              eq(schema.competitors.projectId, projectId),
-              eq(schema.competitors.name, competitor.name)
-            )
-          );
-          await db.update(schema.companies).set({
-            description: desc,
-          }).where(
-            and(
-              eq(schema.companies.projectId, projectId),
-              eq(schema.companies.name, competitor.name)
-            )
-          );
-        }
+      }
+    }
+
+    // Delete invalid competitors from database
+    if (invalidCompetitorNames.length > 0) {
+      for (const invalidName of invalidCompetitorNames) {
+        await db.delete(schema.competitors).where(
+          and(
+            eq(schema.competitors.projectId, projectId),
+            eq(schema.competitors.name, invalidName)
+          )
+        );
+        await db.delete(schema.companies).where(
+          and(
+            eq(schema.companies.projectId, projectId),
+            eq(schema.companies.name, invalidName)
+          )
+        );
+        console.log(`=== DEEP COMPETITOR RESEARCH: Deleted invalid competitor "${invalidName}" from DB ===`);
       }
     }
 
@@ -737,7 +916,7 @@ ${project.region ? `Region: ${project.region}` : ''}
       competitorResearch[name] = result.content;
     }
 
-    console.log("=== DEEP COMPETITOR RESEARCH: Completed for", topCompetitors.length, "competitors ===");
+    console.log(`=== DEEP COMPETITOR RESEARCH: Completed - ${validatedCompetitors.length} valid competitors (rejected ${invalidCompetitorNames.length}) ===`);
 
     return {
       ...previousData,
@@ -755,10 +934,206 @@ ${project.region ? `Region: ${project.region}` : ''}
   }
 }
 
+async function processCompetitorSelection(projectId: number, project: any, previousData: any): Promise<any> {
+  console.log("=== COMPETITOR SELECTION: Starting deep website reading for competitor selection ===");
+
+  const competitors = previousData?.competitors || [];
+  
+  // Get ALL competitors from database to ensure we have at least 18
+  const db = getDb();
+  const allDbCompetitors = await db.select().from(schema.competitors).where(
+    eq(schema.competitors.projectId, projectId)
+  );
+  
+  // If we have fewer than 18, find more
+  let finalCompetitors = [...allDbCompetitors];
+  if (finalCompetitors.length < 18) {
+    console.log(`=== COMPETITOR SELECTION: Only ${finalCompetitors.length} competitors, finding ${18 - finalCompetitors.length} more ===`);
+    
+    const existingNames = new Set(finalCompetitors.map(c => c.name));
+    const businessContext = `
+BUSINESS DESCRIPTION (from user - this is ground truth):
+${project.notes || 'No description provided.'}
+${project.category ? `Category: ${project.category}` : ''}
+${project.region ? `Region: ${project.region}` : ''}
+`.trim();
+
+    const prompt = `For the business: ${project.name} (${project.notes || project.category || "no description"})
+Region: ${project.region || 'Not specified'}
+
+You already know about: ${Array.from(existingNames).join(", ")}
+
+Find ${18 - finalCompetitors.length} MORE direct competitors that have ACTIVE, LIVE websites.
+Each competitor MUST have:
+- A real, working website URL that you KNOW IS ACTIVE
+- Direct competition with the business above (same products/services)
+- Similar target market and business model
+- **Same region/area as the target business**
+
+CRITICAL: Do NOT include competitors from different regions unless they explicitly serve this region.
+
+IMPORTANT: Only include competitors with websites that are currently live and accessible.
+
+Return a JSON "competitors" array with: name, description, websiteUrl
+Do NOT repeat any competitor already listed above.`;
+
+    try {
+      const { content } = await summaryService.generateResponse([
+        { role: "system", content: "You are a market research analyst. Find competitors in JSON format. Only include competitors with verified active websites. Always respond with valid JSON only." },
+        { role: "user", content: prompt }
+      ], 0.3, 3000, "summary");
+      
+      const result = JSON.parse(content);
+      
+      for (const newCompetitor of result.competitors || []) {
+        if (newCompetitor.websiteUrl && !existingNames.has(newCompetitor.name)) {
+          // Verify URL is actually live before adding
+          const urlCheck = await checkUrlLive(newCompetitor.websiteUrl);
+          if (urlCheck.isLive) {
+            console.log(`=== COMPETITOR SELECTION: Verified live URL for "${newCompetitor.name}" ===`);
+            
+            // Save to database
+            await db.insert(schema.competitors).values({
+              projectId,
+              name: newCompetitor.name || "Unknown",
+              description: newCompetitor.description || "",
+              websiteUrl: newCompetitor.websiteUrl || "",
+              revenueEstimate: newCompetitor.revenueEstimate || null,
+              marketShare: newCompetitor.marketShare || null,
+            });
+            
+            await db.insert(schema.companies).values({
+              projectId,
+              name: newCompetitor.name || "Unknown",
+              websiteUrl: newCompetitor.websiteUrl || "",
+              description: newCompetitor.description || "",
+              isMainCompany: false,
+            });
+            
+            finalCompetitors.push(newCompetitor);
+            existingNames.add(newCompetitor.name);
+          } else {
+            console.log(`=== COMPETITOR SELECTION: URL dead for "${newCompetitor.name}" (${urlCheck.statusCode}), skipping ===`);
+          }
+        }
+        
+        if (finalCompetitors.length >= 18) break;
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    } catch (e) {
+      console.error("=== COMPETITOR SELECTION: Failed to find additional competitors ===", e);
+    }
+  }
+
+  console.log(`=== COMPETITOR SELECTION: Found ${finalCompetitors.length} total competitors ===`);
+  
+  // Now deeply read ALL 18+ competitor websites (up to 10 pages each)
+  const deepAnalysisResults: Array<{competitor: any; analysis: any; score: number}> = [];
+  
+  for (const competitor of finalCompetitors.slice(0, 25)) { // Limit to top 25 to avoid timeout
+    try {
+      console.log(`=== COMPETITOR SELECTION: Deep reading ${competitor.name} ===`);
+      
+      const deepPrompt = `Conduct a COMPREHENSIVE analysis of this competitor website: ${competitor.websiteUrl}
+
+Analyze up to 10 pages including:
+- Homepage
+- About page
+- Products/Services pages
+- Pricing pages
+- Blog/Content
+- Customer testimonials/reviews
+- Contact/Support pages
+
+CRITICAL: Compare this competitor's region to the target business's region. If they are in different regions, heavily penalize their score.
+
+Evaluate:
+1. Business model & revenue streams
+2. Product/service quality & differentiation
+3. Pricing strategy
+4. Target customer demographics
+5. Market positioning
+6. Competitive advantages
+7. Website quality & conversion optimization
+8. Customer engagement strategies
+9. Marketing tactics
+10. **Region match: Is this competitor in the same region?** (if different region, heavily penalize)
+11. **Overall competitiveness score (1-100)** - heavily penalize for region mismatch
+
+Return JSON:
+{
+  "analysis": "Comprehensive summary",
+  "score": 85,
+  "strengths": ["list"],
+  "weaknesses": ["list"],
+  "marketPosition": "description"
+}`;
+
+      const { content } = await summaryService.generateResponse([
+        { role: "system", content: "You are a competitive intelligence analyst. Deeply analyze competitor websites across multiple pages. Provide comprehensive scoring and analysis." },
+        { role: "user", content: deepPrompt }
+      ], 0.3, 8000, "analysis");
+      
+      const result = JSON.parse(content);
+      deepAnalysisResults.push({
+        competitor,
+        analysis: result,
+        score: result.score || 50
+      });
+      
+      console.log(`=== COMPETITOR SELECTION: ${competitor.name} scored ${result.score || 50}/100 ===`);
+      
+      // Rate limiting
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+    } catch (error) {
+      console.error(`=== COMPETITOR SELECTION: Failed deep analysis for ${competitor.name} ===`, error);
+    }
+  }
+  
+  // Sort by score and select top 6
+  deepAnalysisResults.sort((a, b) => b.score - a.score);
+  const top6Competitors = deepAnalysisResults.slice(0, 6);
+  
+  console.log(`=== COMPETITOR SELECTION: Selected top 6 competitors ===`);
+  top6Competitors.forEach((item, index) => {
+    console.log(`${index + 1}. ${item.competitor.name}: ${item.score}/100`);
+  });
+  
+  // Update database to mark top 6 as "selected"
+  for (const item of deepAnalysisResults) {
+    const isTop6 = top6Competitors.includes(item);
+    await db.update(schema.competitors).set({
+      isTopCompetitor: isTop6,
+      competitiveScore: item.score
+    }).where(
+      and(
+        eq(schema.competitors.projectId, projectId),
+        eq(schema.competitors.name, item.competitor.name)
+      )
+    );
+  }
+  
+  return {
+    ...previousData,
+    competitors: top6Competitors.map(item => item.competitor),
+    competitorAnalysis: deepAnalysisResults,
+    competitorSelectionSuccess: true
+  };
+}
+
 async function processReviewAggregation(projectId: number, project: any, previousData: any): Promise<any> {
   console.log("=== REVIEW AGGREGATION: Starting to gather reviews from multiple sources ===");
   
-  const competitors = previousData?.competitors || [];
+  // Get top 6 competitors from database
+  const db = getDb();
+  const topCompetitors = await db.select().from(schema.competitors).where(
+    and(
+      eq(schema.competitors.projectId, projectId),
+      eq(schema.competitors.isTopCompetitor, true)
+    )
+  ).limit(6);
+  
   const mainCompanyName = project.name;
   const mainWebsiteUrl = project.websiteUrl;
   
@@ -767,8 +1142,12 @@ async function processReviewAggregation(projectId: number, project: any, previou
     const mainReviews = await aggregateReviews(mainCompanyName, mainWebsiteUrl);
     console.log("=== REVIEW AGGREGATION: Found", mainReviews.reviews.length, "reviews for main company ===");
     
-    // Get reviews for top competitors
-    const competitorReviewResults = await getCompetitorReviewInsights(competitors.slice(0, 6));
+    // Get reviews for top competitors - map to expected format with non-null websiteUrl
+    const competitorReviewResults = await getCompetitorReviewInsights(
+      topCompetitors
+        .filter((c): c is typeof c & { websiteUrl: string } => c.websiteUrl !== null)
+        .map(c => ({ name: c.name, websiteUrl: c.websiteUrl }))
+    );
     
     // Store reviews by company
     const allReviews: Record<string, any> = {
@@ -1113,7 +1492,7 @@ async function processNextBigThing(projectId: number, project: any, previousData
   const prompt = `Create 2 short strategy options for "${project.name}".
 Context: ${(project.notes || '').slice(0, 200)}
 Position: ${mainResearch.targetMarket || businessResearch.marketPosition || 'N/A'}
-Return JSON with 'strategies' array containing 2 objects with: title, summary, eliminate, reduce, raise, create, difficulty (1-10).`;
+Return JSON with 'strategies' array containing 2 objects with: title, summary, eliminate, reduce, raise, create, difficulty (1-10), targetCustomer, positioningStatement, risks (array), operationalImplications. Each field must have meaningful content, not be empty or "Not specified".`;
 
   let content: string;
   let result: any;
@@ -1125,12 +1504,12 @@ Return JSON with 'strategies' array containing 2 objects with: title, summary, e
     try {
       // Create a custom AI service instance with short timeout for Netlify compatibility
       const nextBigThingAIService = new AIService();
-      nextBigThingAIService.requestTimeoutMs = 10000; // 10 seconds - use configured timeout
+      nextBigThingAIService.requestTimeoutMs = 30000; // 30 seconds
       
       const response = await nextBigThingAIService.generateResponse([
-        { role: "system", content: "You are a strategy expert. Create JSON with 'strategies' array. EACH strategy must include ALL of these fields: title, summary, eliminate, reduce, raise, create, difficulty (1-10), targetCustomer, positioningStatement, risks (array), operationalImplications, valueCurve (array of {factor, currentScore, proposedScore}). Be complete and thorough." },
+        { role: "system", content: "You are a strategy expert. Create JSON with 'strategies' array. EACH strategy MUST include ALL of these fields with real content: title, summary, eliminate, reduce, raise, create, difficulty (1-10), targetCustomer (WHO is the customer), positioningStatement (in quotes), risks (array with 2+ items), operationalImplications. Be concise but complete - do not use placeholder text like 'Not specified'." },
         { role: "user", content: prompt },
-      ], 0.7, 2500, "strategy"); // More tokens for complete strategy data
+      ], 0.7, 1500, "strategy");
       content = response.content;
       result = JSON.parse(content);
       break; // Success, exit retry loop
@@ -1317,7 +1696,21 @@ Ensure nextBigThingOptions includes COMPLETE strategy data including difficulty 
       reportAIService.requestTimeoutMs = 25000; // 25 seconds for report generation
       
       const response = await reportAIService.generateResponse([
-        { role: "system", content: "You are a strategic analysis report writer. Create detailed JSON with all requested fields. Include complete strategy data including difficulty (1-10), eliminate, reduce, raise, create, targetCustomer, positioningStatement, risks (array), and operationalImplications for each strategy." },
+        { role: "system", content: `You are a strategic analysis report writer. Create detailed JSON with all requested fields.
+CRITICAL: Every strategy object in nextBigThingOptions MUST include ALL of these fields:
+- title (string)
+- summary (string)
+- eliminate (string) - ERRC: what to eliminate
+- reduce (string) - ERRC: what to reduce
+- raise (string) - ERRC: what to raise
+- create (string) - ERRC: what to create
+- difficulty (number 1-10)
+- targetCustomer (string) - WHO is the target customer, be specific
+- positioningStatement (string) - A complete positioning statement in quotes
+- risks (array of strings) - At least 2-3 specific risks
+- operationalImplications (string) - What operations changes are needed
+- valueCurve (array)
+- revenuePotential (string or null)` },
         { role: "user", content: prompt },
       ], 0.7, 2000, "strategy"); // More tokens for comprehensive report
       content = response.content;

@@ -84,7 +84,9 @@ export default function ProjectPage({ params }: { params: { id: string } }) {
   useEffect(() => {
     const fetchProject = async () => {
       try {
-        const response = await fetch(`/api/projects/${projectId}`);
+        const response = await fetch(`/api/projects/${projectId}`, {
+          credentials: "include"
+        });
         if (response.ok) {
           const data = await response.json();
           setProject(data.project);
@@ -119,6 +121,7 @@ export default function ProjectPage({ params }: { params: { id: string } }) {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({ stage: currentStageKey }),
+          credentials: "include",
         });
 
         if (!response.ok) {

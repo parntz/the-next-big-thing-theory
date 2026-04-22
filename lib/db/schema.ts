@@ -7,10 +7,25 @@ import {
 } from "drizzle-orm/sqlite-core";
 
 /**
+ * Users table - stores user accounts
+ */
+export const users = sqliteTable("users", {
+  id: text("id").primaryKey(), // Clerk user ID
+  email: text("email").notNull().unique(),
+  name: text("name"),
+  passwordHash: text("password_hash"), // Nullable for existing users
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .default(sql`CURRENT_TIMESTAMP`)
+    .notNull(),
+});
+
+/**
  * Projects table - represents a market analysis project
  */
 export const projects = sqliteTable("projects", {
   id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: text("user_id")
+    .references(() => users.id),
   name: text("name").notNull(),
   websiteUrl: text("website_url").notNull(),
   category: text("category"),
@@ -56,9 +71,11 @@ export const competitors = sqliteTable("competitors", {
   name: text("name").notNull(),
   description: text("description"),
   isMain: integer("is_main", { mode: "boolean" }).default(false),
+  isTopCompetitor: integer("is_top_competitor", { mode: "boolean" }).default(false),
   websiteUrl: text("website_url"),
   revenueEstimate: text("revenue_estimate"),
   marketShare: text("market_share"),
+  competitiveScore: integer("competitive_score"),
   createdAt: integer("created_at", { mode: "timestamp" })
     .default(sql`CURRENT_TIMESTAMP`)
     .notNull(),
@@ -79,6 +96,7 @@ export const analysisRuns = sqliteTable("analysis_runs", {
       "competitor_normalization",
       "deep_main_research",        // NEW: Deep dive on main company
       "deep_competitor_research",   // NEW: Deep dive on competitors
+      "competitor_selection",      // NEW: Deep website reading & selection of top 6
       "review_aggregation",         // NEW: Aggregate reviews from multiple sources
       "factor_generation",
       "company_scoring",
@@ -211,6 +229,9 @@ export const reports = sqliteTable("reports", {
 });
 
 // Export types for use in application
+export type User = typeof users.$inferSelect;
+export type NewUser = typeof users.$inferInsert;
+
 export type Project = typeof projects.$inferSelect;
 export type NewProject = typeof projects.$inferInsert;
 

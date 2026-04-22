@@ -1,20 +1,58 @@
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
+
+function parseSessionToken(token: string): { id: string; exp: number } | null {
+  try {
+    const decoded = Buffer.from(token, "base64").toString();
+    const [data, signature] = decoded.split("|");
+    
+    if (!data || !signature) return null;
+    
+    const sessionData = JSON.parse(data);
+    if (sessionData.exp > Date.now()) {
+      return { id: sessionData.id, exp: sessionData.exp };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 export async function GET(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
+    const session = request.cookies.get("session");
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const sessionData = parseSessionToken(session.value);
+    if (!sessionData) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const id = parseInt(params.id, 10);
-    
+
     if (isNaN(id)) {
       return NextResponse.json({ error: "Invalid project ID" }, { status: 400 });
     }
 
     const db = getDb();
+
+    // Verify ownership
+    const projectRows = await db
+      .select()
+      .from(schema.projects)
+      .where(and(eq(schema.projects.id, id), eq(schema.projects.userId, sessionData.id)))
+      .limit(1);
+
+    if (projectRows.length === 0) {
+      return NextResponse.json({ error: "Project not found" }, { status: 404 });
+    }
 
     // Get factors
     const factors = await db.select().from(schema.factors).where(

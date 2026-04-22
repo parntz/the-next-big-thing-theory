@@ -2,6 +2,7 @@ import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { eq } from "drizzle-orm";
 
 const ProjectCreateSchema = z.object({
   name: z.string().min(1),
@@ -10,6 +11,23 @@ const ProjectCreateSchema = z.object({
   region: z.string().optional(),
   notes: z.string().optional(),
 });
+
+function parseSessionToken(token: string): { id: string; exp: number } | null {
+  try {
+    const decoded = Buffer.from(token, "base64").toString();
+    const [data, signature] = decoded.split("|");
+    
+    if (!data || !signature) return null;
+    
+    const sessionData = JSON.parse(data);
+    if (sessionData.exp > Date.now()) {
+      return { id: sessionData.id, exp: sessionData.exp };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 function formatDate(timestamp: number | string | Date): string {
   const date = new Date(timestamp);
@@ -21,12 +39,18 @@ function formatDate(timestamp: number | string | Date): string {
 
 export async function POST(request: NextRequest) {
   try {
-    console.log("1. Starting POST /api/projects");
-    const body = await request.json();
-    console.log("2. Request body parsed:", { name: body.name, websiteUrl: body.websiteUrl });
+    const session = request.cookies.get("session");
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
+    const sessionData = parseSessionToken(session.value);
+    if (!sessionData) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const body = await request.json();
     const validation = ProjectCreateSchema.safeParse(body);
-    console.log("3. Validation result:", validation.success ? "passed" : "failed");
 
     if (!validation.success) {
       return NextResponse.json(
@@ -35,14 +59,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log("4. Getting database connection...");
     const db = getDb();
-    console.log("5. Database connection established successfully");
 
-    console.log("6. Inserting project into database...");
     const [project] = await db
       .insert(schema.projects)
       .values({
+        userId: sessionData.id,
         name: validation.data.name,
         websiteUrl: validation.data.websiteUrl,
         category: validation.data.category,
@@ -51,8 +73,6 @@ export async function POST(request: NextRequest) {
         status: "pending",
       })
       .returning();
-
-    console.log("7. Project created successfully:", project.id);
 
     return NextResponse.json(
       {
@@ -70,11 +90,9 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error("ERROR in POST /api/projects:", error);
     const errorMessage = error instanceof Error ? error.message : String(error);
-    const errorStack = error instanceof Error ? error.stack : "No stack trace";
     console.error("Error details:", errorMessage);
-    console.error("Error stack:", errorStack);
     return NextResponse.json(
-      { error: "Failed to create project", details: errorMessage, stack: errorStack },
+      { error: "Failed to create project", details: errorMessage },
       { status: 500 }
     );
   }
@@ -82,11 +100,24 @@ export async function POST(request: NextRequest) {
 
 export async function GET(request: NextRequest) {
   try {
+    const session = request.cookies.get("session");
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const sessionData = parseSessionToken(session.value);
+    if (!sessionData) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const db = getDb();
-    
-    const projects = await db.select().from(schema.projects).orderBy(
-      schema.projects.createdAt
-    ).limit(100);
+
+    const projects = await db
+      .select()
+      .from(schema.projects)
+      .where(eq(schema.projects.userId, sessionData.id))
+      .orderBy(schema.projects.createdAt)
+      .limit(100);
 
     return NextResponse.json(
       projects.map(p => ({

@@ -1,8 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { getDb } from "@lib/db/client";
-import * as schema from "@lib/db/schema";
 import { useState, useEffect } from "react";
 
 interface Project {
@@ -23,7 +21,9 @@ export default function ProjectsPage() {
   useEffect(() => {
     const fetchProjects = async () => {
       try {
-        const response = await fetch("/api/projects");
+        const response = await fetch("/api/projects", {
+          credentials: "include"
+        });
         if (response.ok) {
           const data = await response.json();
           setProjects(data);
@@ -45,6 +45,7 @@ export default function ProjectsPage() {
     try {
       const response = await fetch(`/api/projects/${projectId}`, {
         method: "DELETE",
+        credentials: "include",
       });
 
       if (response.ok) {
@@ -61,17 +62,32 @@ export default function ProjectsPage() {
     }
   };
 
+  const handleSignOut = () => {
+    document.cookie = "session=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+    window.location.href = "/login";
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       <div className="container mx-auto px-4 py-8">
         <div className="flex justify-between items-center mb-8">
-          <h1 className="text-3xl font-bold">Your Projects</h1>
-          <Link
-            href="/projects/new"
-            className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-colors"
-          >
-            New Project
-          </Link>
+          <div>
+            <h1 className="text-3xl font-bold">My Projects</h1>
+          </div>
+          <div className="flex items-center gap-4">
+            <button
+              onClick={handleSignOut}
+              className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors text-sm font-medium"
+            >
+              Sign Out
+            </button>
+            <Link
+              href="/projects/new"
+              className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-colors"
+            >
+              New Project
+            </Link>
+          </div>
         </div>
 
         {projects.length === 0 ? (
@@ -89,8 +105,8 @@ export default function ProjectsPage() {
         ) : (
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
             {projects.map(project => (
-              <div 
-                key={project.id} 
+              <div
+                key={project.id}
                 className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow hover:shadow-lg transition-shadow h-full flex flex-col"
               >
                 <Link href={`/projects/${project.id}`} className="block flex-grow">
@@ -108,7 +124,7 @@ export default function ProjectsPage() {
                       {new Date(project.createdAt).toLocaleDateString()}
                     </span>
                     <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-                      project.status === "complete" 
+                      project.status === "complete"
                         ? "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200"
                         : "bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200"
                     }`}>

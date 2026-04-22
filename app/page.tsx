@@ -1,7 +1,12 @@
+"use client";
+
 import Link from "next/link";
-import Image from "next/image";
+import { useSession } from "next-auth/react";
 
 export default function HomePage() {
+  const sessionResult = useSession();
+  const session = sessionResult?.data;
+
   return (
     <div className="min-h-screen bg-white dark:bg-black">
       {/* Hero Section */}
@@ -12,22 +17,41 @@ export default function HomePage() {
               Unlock Your <span className="text-blue-600">Next Big Thing</span>
             </h1>
             <p className="text-xl md:text-2xl text-gray-600 dark:text-gray-300 mb-12">
-              AI-powered market strategy analysis. Generate Blue Ocean Strategy 
+              AI-powered market strategy analysis. Generate Blue Ocean Strategy
               opportunities with evidence-based insights.
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
-              <Link
-                href="/projects/new"
-                className="px-8 py-4 bg-blue-600 hover:bg-blue-700 text-white text-lg font-semibold rounded-lg transition-colors"
-              >
-                Start New Analysis
-              </Link>
-              <Link
-                href="/projects"
-                className="px-8 py-4 border-2 border-gray-200 dark:border-gray-700 hover:border-blue-600 dark:hover:border-blue-500 text-gray-700 dark:text-gray-300 text-lg font-semibold rounded-lg transition-colors"
-              >
-                View Projects
-              </Link>
+              {session ? (
+                <>
+                  <Link
+                    href="/projects/new"
+                    className="px-8 py-4 bg-blue-600 hover:bg-blue-700 text-white text-lg font-semibold rounded-lg transition-colors"
+                  >
+                    Start New Analysis
+                  </Link>
+                  <Link
+                    href="/projects"
+                    className="px-8 py-4 border-2 border-gray-200 dark:border-gray-700 hover:border-blue-600 dark:hover:border-blue-500 text-gray-700 dark:text-gray-300 text-lg font-semibold rounded-lg transition-colors"
+                  >
+                    View My Projects
+                  </Link>
+                </>
+              ) : (
+                <>
+                  <Link
+                    href="/login"
+                    className="px-8 py-4 bg-blue-600 hover:bg-blue-700 text-white text-lg font-semibold rounded-lg transition-colors"
+                  >
+                    Sign In
+                  </Link>
+                  <Link
+                    href="/register"
+                    className="px-8 py-4 border-2 border-gray-200 dark:border-gray-700 hover:border-blue-600 dark:hover:border-blue-500 text-gray-700 dark:text-gray-300 text-lg font-semibold rounded-lg transition-colors"
+                  >
+                    Create Account
+                  </Link>
+                </>
+              )}
             </div>
           </div>
         </div>

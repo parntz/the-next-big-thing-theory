@@ -29,6 +29,7 @@ export default function NewProjectPage() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify(formData),
+        credentials: "include",
       });
 
       console.log("Response status:", response.status);

@@ -8,6 +8,27 @@
       "when": 1776462200524,
       "tag": "0000_easy_doctor_spectrum",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1776721392094,
+      "tag": "0001_massive_ben_parker",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1776722714873,
+      "tag": "0002_cheerful_gorgon",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1776722868085,
+      "tag": "0003_normal_guardsmen",
+      "breakpoints": true
     }
   ]
 }

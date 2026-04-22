@@ -114,6 +114,104 @@ ${contextSection}Conduct a DEEP analysis covering:
   }
 }
 
+/**
+ * Checks if a URL is actually live and returns a valid HTTP response.
+ * Returns true if URL responds with 200-399 status code.
+ */
+export async function checkUrlLive(url: string): Promise<{ isLive: boolean; statusCode: number; error?: string }> {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+    
+    const response = await fetch(url, {
+      method: "HEAD",
+      redirect: "follow",
+      signal: controller.signal,
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; CompetitorValidator/1.0)"
+      }
+    });
+    
+    clearTimeout(timeoutId);
+    
+    if (response.ok || response.status < 400) {
+      return { isLive: true, statusCode: response.status };
+    }
+    
+    return { isLive: false, statusCode: response.status };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    // Handle specific error types
+    if (errorMessage.includes("abort")) {
+      return { isLive: false, statusCode: 0, error: "Timeout" };
+    }
+    if (errorMessage.includes("getaddrinfo") || errorMessage.includes("ENOTFOUND")) {
+      return { isLive: false, statusCode: 0, error: "DNS lookup failed" };
+    }
+    if (errorMessage.includes("ECONNREFUSED")) {
+      return { isLive: false, statusCode: 0, error: "Connection refused" };
+    }
+    return { isLive: false, statusCode: 0, error: errorMessage };
+  }
+}
+
+/**
+ * Validates that a scraped competitor actually matches the target business type.
+ * Returns true if relevant, false if this is a false positive match (e.g., "bark" in statue shop).
+ */
+export async function validateCompetitorRelevance(
+  competitorName: string,
+  scrapeResult: ScrapeResult,
+  targetBusinessContext: string
+): Promise<{ isRelevant: boolean; reason: string }> {
+  if (!scrapeResult.success) {
+    return { isRelevant: false, reason: "Failed to scrape website" };
+  }
+
+  const prompt = `
+CRITICAL VALIDATION TASK:
+You must determine if the scraped website is actually a DIRECT competitor to the target business.
+
+TARGET BUSINESS (this is the business we're analyzing - use this to judge competitors):
+${targetBusinessContext}
+
+SCRAPED COMPETITOR TO VALIDATE:
+- Name: ${competitorName}
+- Description from their website: ${scrapeResult.content.description}
+- Main Products: ${scrapeResult.content.mainProducts.join(", ")}
+- Target Market: ${scrapeResult.content.targetMarket}
+
+YOUR TASK:
+1. Does the competitor sell the SAME type of products/services as the target business?
+2. Do they target a SIMILAR customer demographic?
+3. Is this a TRUE competitor or just a false positive (e.g., keyword match like "bark" in URL but not actually dog training)?
+4. CRITICAL: Is the competitor in the SAME REGION as the target business? If not, reject it.
+
+Respond with JSON:
+{
+  "isRelevant": true/false,
+  "reason": "Brief explanation of why this is or isn't a valid competitor"
+}`;
+
+  try {
+    const { content } = await summaryService.generateResponse([
+      { role: "system", content: "You are a strict business validation analyst. Only return true if the competitor DIRECTLY competes with the target business. Be skeptical of keyword matches - verify actual business alignment." },
+      { role: "user", content: prompt }
+    ], 0.2, 500, "summary");
+
+    const validation = JSON.parse(content);
+    console.log(`[Scraper] Competitor validation for ${competitorName}: ${validation.isRelevant} - ${validation.reason}`);
+    return {
+      isRelevant: validation.isRelevant,
+      reason: validation.reason || "Validation failed"
+    };
+  } catch (error) {
+    console.error(`[Scraper] Validation error for ${competitorName}:`, error);
+    // On error, default to accepting the competitor to avoid over-rejection
+    return { isRelevant: true, reason: "Validation check failed, accepting by default" };
+  }
+}
+
 export async function scrapeCompetitors(competitors: Array<{name: string, websiteUrl: string}>, businessContext?: string): Promise<Map<string, ScrapeResult>> {
   const results = new Map<string, ScrapeResult>();
 

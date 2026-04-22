@@ -4,11 +4,38 @@ import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { formatDate } from "@/lib/utils/date";
 
+function parseSessionToken(token: string): { id: string; exp: number } | null {
+  try {
+    const decoded = Buffer.from(token, "base64").toString();
+    const [data, signature] = decoded.split("|");
+    
+    if (!data || !signature) return null;
+    
+    const sessionData = JSON.parse(data);
+    if (sessionData.exp > Date.now()) {
+      return { id: sessionData.id, exp: sessionData.exp };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
+    const session = request.cookies.get("session");
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const sessionData = parseSessionToken(session.value);
+    if (!sessionData) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const id = parseInt(params.id, 10);
     
     if (isNaN(id)) {
@@ -93,6 +120,16 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
+    const session = request.cookies.get("session");
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const sessionData = parseSessionToken(session.value);
+    if (!sessionData) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const id = parseInt(params.id, 10);
     
     if (isNaN(id)) {
