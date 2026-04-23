@@ -33,6 +33,11 @@ export async function GET(
         ).limit(1).then(rows => rows[0])
       : null;
 
+    // Get all analysis runs for this project to aggregate AI usage
+    const allRuns = await db.select().from(schema.analysisRuns).where(
+      eq(schema.analysisRuns.projectId, id)
+    );
+
     // Parse JSON fields that were stored as strings
     const currentPositioning = typeof report.currentPositioning === 'string' 
       ? JSON.parse(report.currentPositioning) 
@@ -47,6 +52,26 @@ export async function GET(
       ? JSON.parse(report.recommendedStrategy)
       : report.recommendedStrategy;
 
+    // Aggregate AI usage from all runs
+    const aiUsageByModel: Record<string, { inputTokens: number; outputTokens: number; calls: number; costCents: number }> = {};
+    let totalCostCents = 0;
+
+    for (const run of allRuns) {
+      const usage = typeof run.aiUsage === 'string' ? JSON.parse(run.aiUsage) : run.aiUsage;
+      if (Array.isArray(usage)) {
+        for (const record of usage) {
+          if (!aiUsageByModel[record.model]) {
+            aiUsageByModel[record.model] = { inputTokens: 0, outputTokens: 0, calls: 0, costCents: 0 };
+          }
+          aiUsageByModel[record.model].inputTokens += record.inputTokens;
+          aiUsageByModel[record.model].outputTokens += record.outputTokens;
+          aiUsageByModel[record.model].calls += 1;
+          aiUsageByModel[record.model].costCents += record.costCents;
+          totalCostCents += record.costCents;
+        }
+      }
+    }
+
     return NextResponse.json({
       id: report.id,
       projectId: report.projectId,
@@ -60,6 +85,12 @@ export async function GET(
       createdAt: formatDate(report.createdAt),
       analysisRunId: report.analysisRunId,
       analysisStage: analysisRun?.stage,
+      aiUsage: {
+        byModel: aiUsageByModel,
+        totalCostCents,
+        totalInputTokens: Object.values(aiUsageByModel).reduce((sum, m) => sum + m.inputTokens, 0),
+        totalOutputTokens: Object.values(aiUsageByModel).reduce((sum, m) => sum + m.outputTokens, 0),
+      },
     });
   } catch (error) {
     console.error("Error getting report:", error);

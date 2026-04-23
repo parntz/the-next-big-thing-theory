@@ -114,6 +114,7 @@ export const analysisRuns = sqliteTable("analysis_runs", {
   error: text("error"),
   costCents: real("cost_cents"),
   elapsedSeconds: real("elapsed_seconds"),
+  aiUsage: text("ai_usage", { mode: "json" }),
   createdAt: integer("created_at", { mode: "timestamp" })
     .default(sql`CURRENT_TIMESTAMP`)
     .notNull(),

@@ -4,6 +4,22 @@ import { useState, useEffect } from "react";
 import { pdf } from "@react-pdf/renderer";
 import { ReportPdf } from "./ReportPdf";
 
+interface AIUsageByModel {
+  [model: string]: {
+    inputTokens: number;
+    outputTokens: number;
+    calls: number;
+    costCents: number;
+  };
+}
+
+interface AIUsageSummary {
+  byModel: AIUsageByModel;
+  totalCostCents: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+}
+
 interface Report {
   id: number;
   title: string;
@@ -30,10 +46,47 @@ interface Report {
     summary: string;
   };
   confidenceScore: number;
+  aiUsage?: AIUsageSummary;
 }
 
 interface ReportViewProps {
   projectId: number;
+}
+
+// Model cost per 1M tokens (from ai-service.ts)
+const MODEL_COSTS: Record<string, { input: number; output: number }> = {
+  summary: { input: 0.008, output: 0.008 },
+  analysis: { input: 0.01, output: 0.01 },
+  strategy: { input: 0.02, output: 0.02 },
+};
+
+function formatCents(cents: number): string {
+  if (cents < 1) {
+    return `$${(cents * 100).toFixed(2)}¢`;
+  }
+  return `$${(cents / 100).toFixed(4)}`;
+}
+
+function formatTokens(tokens: number): string {
+  if (tokens >= 1000) {
+    return `${(tokens / 1000).toFixed(1)}K`;
+  }
+  return tokens.toString();
+}
+
+function getModelTier(modelName: string): string {
+  if (modelName.includes("deepseek")) return "summary";
+  if (modelName.includes("Qwen3-Coder") || modelName.includes("MiniMax")) {
+    // Check if it's used for strategy tasks
+    return "strategy";
+  }
+  return "analysis";
+}
+
+function getDisplayName(modelFullName: string): string {
+  // Convert "deepseek-ai/DeepSeek-V3.1" to "DeepSeek-V3.1"
+  const parts = modelFullName.split("/");
+  return parts[parts.length - 1];
 }
 
 export function ReportView({ projectId }: ReportViewProps) {
@@ -237,6 +290,51 @@ export function ReportView({ projectId }: ReportViewProps) {
             {report.recommendedStrategy.title}
           </h3>
           <p className="text-green-100">{report.recommendedStrategy.summary}</p>
+        </div>
+      )}
+
+      {/* AI Usage Summary */}
+      {report.aiUsage && Object.keys(report.aiUsage.byModel).length > 0 && (
+        <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow">
+          <h3 className="text-xl font-semibold mb-4">AI Usage Summary</h3>
+          <p className="text-sm text-gray-500 mb-4">
+            Models used and tokens consumed during analysis
+          </p>
+
+          <div className="space-y-3">
+            {Object.entries(report.aiUsage.byModel).map(([model, usage]) => (
+              <div key={model} className="flex items-center justify-between py-2 border-b border-gray-100 dark:border-gray-700 last:border-0">
+                <div className="flex-1">
+                  <div className="font-medium text-sm">{getDisplayName(model)}</div>
+                  <div className="text-xs text-gray-500 mt-0.5">
+                    {usage.calls} call{usage.calls !== 1 ? "s" : ""} ·{" "}
+                    {formatTokens(usage.inputTokens)} input tokens ·{" "}
+                    {formatTokens(usage.outputTokens)} output tokens
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="font-semibold text-sm">
+                    {formatCents(usage.costCents)}
+                  </div>
+                  <div className="text-xs text-gray-500">
+                    ${((usage.costCents / 100) / ((usage.inputTokens + usage.outputTokens) / 1000)).toFixed(4)}/1K tokens
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-4 pt-4 border-t-2 border-gray-200 dark:border-gray-600 flex justify-between items-center">
+            <div>
+              <span className="text-lg font-semibold">Total Cost</span>
+              <span className="text-sm text-gray-500 ml-2">
+                ({formatTokens(report.aiUsage.totalInputTokens)} input + {formatTokens(report.aiUsage.totalOutputTokens)} output tokens)
+              </span>
+            </div>
+            <div className="text-2xl font-bold text-blue-600">
+              {formatCents(report.aiUsage.totalCostCents)}
+            </div>
+          </div>
         </div>
       )}
     </div>

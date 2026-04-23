@@ -4,7 +4,7 @@ import { eq, and, sql } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { getProject, createAnalysisRun, updateAnalysisRun, getCompaniesByProject, getCompetitorsByProject, createFactor, createCompany, createCompetitor, createCompanyFactorScore, createNextBigThingOption, createReport } from "@/lib/services/db-service";
 import { formatDate } from "@/lib/utils/date";
-import { summaryService, analysisService, strategyService, AIService, type ModelType } from "@/lib/services/ai-service";
+import { summaryService, analysisService, strategyService, AIService, AI_COSTS, type ModelType } from "@/lib/services/ai-service";
 import { BusinessResearchSchema, CompetitorDiscoverySchema, NormalizedCompetitorSchema, AnalysisFactorSchema, CompanyScoreResultSchema, StrategyCanvasSchema, NextBigThingStrategySchema, NextBigThingResultSchema, StrategyReport, ReportSchema } from "@/lib/services/ai-service";
 import { scrapeWebsite, scrapeCompetitors, formatCompetitorInsights, validateCompetitorRelevance, checkUrlLive } from "@/lib/services/scraper-service";
 import { aggregateReviews, getCompetitorReviewInsights, formatReviewsForPrompt } from "@/lib/services/review-aggregation-service";
@@ -34,6 +34,23 @@ interface AnalysisContext {
   strategyCanvas?: any;
   nextBigThingOptions?: any;
   report?: any;
+}
+
+interface AIUsageRecord {
+  model: string;
+  modelType: ModelType;
+  inputTokens: number;
+  outputTokens: number;
+  costCents: number;
+}
+
+function calculateCallCost(modelType: ModelType, inputTokens: number, outputTokens: number): number {
+  const costs = AI_COSTS[modelType];
+  return ((inputTokens / 1_000_000) * costs.input + (outputTokens / 1_000_000) * costs.output) * 100;
+}
+
+function sumAIUsage(usageList: AIUsageRecord[]): AIUsageRecord[] {
+  return usageList;
 }
 
 export async function POST(
@@ -112,70 +129,71 @@ export async function POST(
     let resultData: any = null;
     let nextStage: AnalysisStage | null = null;
     let completed = false;
+    const stageAIUsage: AIUsageRecord[] = [];
 
     try {
       switch (analysisRun.stage) {
         case "business_research":
-          resultData = await processBusinessResearch(id, project, analysisRun.inputData);
+          resultData = await processBusinessResearch(id, project, analysisRun.inputData, stageAIUsage);
           nextStage = "competitor_discovery";
           break;
 
         case "competitor_discovery":
-          resultData = await processCompetitorDiscovery(id, project, analysisRun.inputData);
+          resultData = await processCompetitorDiscovery(id, project, analysisRun.inputData, stageAIUsage);
           nextStage = "competitor_normalization";
           break;
 
         case "competitor_normalization":
-          resultData = await processCompetitorNormalization(id, project, analysisRun.inputData);
+          resultData = await processCompetitorNormalization(id, project, analysisRun.inputData, stageAIUsage);
           nextStage = "deep_main_research";
           break;
 
         case "deep_main_research":
           console.log("=== STAGE: Deep Main Website Research ===");
-          resultData = await processDeepMainResearch(id, project, analysisRun.inputData);
+          resultData = await processDeepMainResearch(id, project, analysisRun.inputData, stageAIUsage);
           nextStage = "deep_competitor_research";
           break;
 
         case "deep_competitor_research":
           console.log("=== STAGE: Deep Competitor Website Research ===");
-          resultData = await processDeepCompetitorResearch(id, project, analysisRun.inputData);
+          resultData = await processDeepCompetitorResearch(id, project, analysisRun.inputData, stageAIUsage);
           nextStage = "competitor_selection";
           break;
 
         case "competitor_selection":
           console.log("=== STAGE: Competitor Selection & Deep Website Reading ===");
-          resultData = await processCompetitorSelection(id, project, analysisRun.inputData);
+          resultData = await processCompetitorSelection(id, project, analysisRun.inputData, stageAIUsage);
           nextStage = "review_aggregation";
           break;
 
         case "review_aggregation":
           console.log("=== STAGE: Review Aggregation ===");
-          resultData = await processReviewAggregation(id, project, analysisRun.inputData);
+          resultData = await processReviewAggregation(id, project, analysisRun.inputData, stageAIUsage);
           nextStage = "factor_generation";
           break;
 
         case "factor_generation":
-          resultData = await processFactorGeneration(id, project, analysisRun.inputData);
+          resultData = await processFactorGeneration(id, project, analysisRun.inputData, stageAIUsage);
           nextStage = "company_scoring";
           break;
 
         case "company_scoring":
-          resultData = await processCompanyScoring(id, project, analysisRun.inputData);
+          resultData = await processCompanyScoring(id, project, analysisRun.inputData, stageAIUsage);
           nextStage = "strategy_canvas";
           break;
 
         case "strategy_canvas":
-          resultData = await processStrategyCanvas(id, project, analysisRun.inputData);
+          resultData = await processStrategyCanvas(id, project, analysisRun.inputData, stageAIUsage);
           nextStage = "next_big_thing";
           break;
 
         case "next_big_thing":
-          resultData = await processNextBigThing(id, project, analysisRun.inputData);
+          resultData = await processNextBigThing(id, project, analysisRun.inputData, stageAIUsage);
           nextStage = "report_assembly";
           break;
 
         case "report_assembly":
-          resultData = await processReportAssembly(id, project, analysisRun.inputData);
+          resultData = await processReportAssembly(id, project, analysisRun.inputData, stageAIUsage);
           nextStage = "complete";
           break;
 
@@ -215,11 +233,14 @@ export async function POST(
     }
 
     // Update the analysis run with output data and progress to next stage
+    const stageCostCents = stageAIUsage.reduce((sum, u) => sum + u.costCents, 0);
     const updatedRun = await updateAnalysisRun(analysisRun.id, {
       status: "completed",
       outputData: resultData,
       elapsedSeconds,
       completedAt: new Date(),
+      costCents: stageCostCents,
+      aiUsage: stageAIUsage,
     });
 
     // If there's a next stage, create a new analysis run for it
@@ -302,7 +323,7 @@ export async function GET(
 
 // ============ Analysis Processing Functions ============
 
-async function processBusinessResearch(projectId: number, project: any, previousData: any): Promise<any> {
+async function processBusinessResearch(projectId: number, project: any, previousData: any, aiUsage: AIUsageRecord[]): Promise<any> {
   const projectContext = [
     `Business Name: ${project.name}`,
     `Website: ${project.websiteUrl}`,
@@ -312,7 +333,7 @@ async function processBusinessResearch(projectId: number, project: any, previous
   ].filter(Boolean).join('\n');
 
   const prompt = `Analyze this business. This is the user's own description of their business - believe it completely:
-  
+
 ${projectContext}
 
 **CRITICAL INSTRUCTIONS:**
@@ -331,13 +352,21 @@ Provide business research including:
 
 Return JSON with keys: summary, keyStrengths, keyWeaknesses, marketPosition, uniqueValueProposition, revenueModel, targetMarket.`;
 
-  const { content } = await summaryService.generateResponse([
+  const response = await summaryService.generateResponse([
     { role: "system", content: "You are a business analyst. Provide detailed business research in JSON format. Always respond with valid JSON only." },
     { role: "user", content: prompt },
   ], 0.3, 4000, "summary");
 
-  const result = JSON.parse(content);
-  
+  aiUsage.push({
+    model: response.modelUsed,
+    modelType: "summary",
+    inputTokens: response.inputTokens,
+    outputTokens: response.outputTokens,
+    costCents: calculateCallCost("summary", response.inputTokens, response.outputTokens),
+  });
+
+  const result = JSON.parse(response.content);
+
   // Update the project with this research data
   const db = getDb();
   await db.update(schema.projects).set({
@@ -347,7 +376,7 @@ Return JSON with keys: summary, keyStrengths, keyWeaknesses, marketPosition, uni
   return { ...result, ...previousData };
 }
 
-async function processCompetitorDiscovery(projectId: number, project: any, previousData: any): Promise<any> {
+async function processCompetitorDiscovery(projectId: number, project: any, previousData: any, aiUsage: AIUsageRecord[]): Promise<any> {
   // Include project details - especially notes/description which contains user's context
   const projectDetails = [
     project.name,
@@ -387,12 +416,20 @@ async function processCompetitorDiscovery(projectId: number, project: any, previ
 
   Return JSON with a "competitors" array. Every competitor object MUST have a "websiteUrl" field with a valid URL. If you cannot find a website, use your knowledge to construct the most likely domain (e.g., for "Brand Name" try "brandname.com").`;
 
-  const { content } = await summaryService.generateResponse([
+  const initResponse = await summaryService.generateResponse([
     { role: "system", content: "You are a market research analyst. Identify competitors in JSON format. Always respond with valid JSON only." },
     { role: "user", content: prompt },
   ], 0.3, 4000, "summary");
 
-  const result = JSON.parse(content);
+  aiUsage.push({
+    model: initResponse.modelUsed,
+    modelType: "summary",
+    inputTokens: initResponse.inputTokens,
+    outputTokens: initResponse.outputTokens,
+    costCents: calculateCallCost("summary", initResponse.inputTokens, initResponse.outputTokens),
+  });
+
+  const result = JSON.parse(initResponse.content);
 
   // Save competitors and companies to the database
   const db = getDb();
@@ -456,12 +493,20 @@ Each MUST have a websiteUrl that you KNOW FOR CERTAIN is live and active.
 Return JSON with "competitors" array: name, description, websiteUrl`;
 
     try {
-      const { content } = await summaryService.generateResponse([
+      const replacementResponse = await summaryService.generateResponse([
         { role: "system", content: "You are a market research analyst. Find competitors in JSON format. Only include competitors you know have active websites. Always respond with valid JSON only." },
         { role: "user", content: replacementPrompt }
       ], 0.3, 3000, "summary");
-      
-      const replacementResult = JSON.parse(content);
+
+      aiUsage.push({
+        model: replacementResponse.modelUsed,
+        modelType: "summary",
+        inputTokens: replacementResponse.inputTokens,
+        outputTokens: replacementResponse.outputTokens,
+        costCents: calculateCallCost("summary", replacementResponse.inputTokens, replacementResponse.outputTokens),
+      });
+
+      const replacementResult = JSON.parse(replacementResponse.content);
       
       for (const replacement of replacementResult.competitors || []) {
         if (replacement.websiteUrl) {
@@ -519,7 +564,7 @@ Return JSON with "competitors" array: name, description, websiteUrl`;
   return { ...result, ...previousData };
 }
 
-async function processCompetitorNormalization(projectId: number, project: any, previousData: any): Promise<any> {
+async function processCompetitorNormalization(projectId: number, project: any, previousData: any, aiUsage: AIUsageRecord[]): Promise<any> {
   // Normalize competitors to a standard format
   // ONLY include competitors that have a valid websiteUrl — no URL means not a valid competitor
   let competitors = (previousData?.competitors || []).filter(
@@ -556,13 +601,21 @@ IMPORTANT: Only include competitors with websites that are currently live and ac
 Return a JSON "competitors" array with: name, description, websiteUrl
 Do NOT repeat any competitor already listed above.`;
 
-    const { content } = await summaryService.generateResponse([
+    const normResponse = await summaryService.generateResponse([
       { role: "system", content: "You are a market research analyst. Find competitors in JSON format. Only include competitors with verified active websites. Always respond with valid JSON only." },
       { role: "user", content: prompt },
     ], 0.3, 3000, "summary");
 
+    aiUsage.push({
+      model: normResponse.modelUsed,
+      modelType: "summary",
+      inputTokens: normResponse.inputTokens,
+      outputTokens: normResponse.outputTokens,
+      costCents: calculateCallCost("summary", normResponse.inputTokens, normResponse.outputTokens),
+    });
+
     try {
-      const result = JSON.parse(content);
+      const result = JSON.parse(normResponse.content);
       for (const c of result.competitors || []) {
         if (
           c.websiteUrl && c.websiteUrl.startsWith("http") &&
@@ -578,7 +631,7 @@ Do NOT repeat any competitor already listed above.`;
             console.log(`=== COMPETITOR NORMALIZATION: URL dead for "${c.name}" (${urlCheck.statusCode}), skipping ===`);
           }
         }
-        
+
         // Rate limiting
         await new Promise(resolve => setTimeout(resolve, 500));
       }
@@ -673,7 +726,7 @@ Do NOT repeat any competitor already listed above.`;
 
 // ========== NEW DEEP RESEARCH STAGES ==========
 
-async function processDeepMainResearch(projectId: number, project: any, previousData: any): Promise<any> {
+async function processDeepMainResearch(projectId: number, project: any, previousData: any, aiUsage: AIUsageRecord[]): Promise<any> {
   console.log("=== DEEP MAIN RESEARCH: Starting deep dive into", project.name, "website ===");
 
   const websiteUrl = project.websiteUrl || `https://${project.name.toLowerCase().replace(/\s+/g, '')}.com`;
@@ -715,7 +768,7 @@ ${project.region ? `Region: ${project.region}` : ''}
   }
 }
 
-async function processDeepCompetitorResearch(projectId: number, project: any, previousData: any): Promise<any> {
+async function processDeepCompetitorResearch(projectId: number, project: any, previousData: any, aiUsage: AIUsageRecord[]): Promise<any> {
   console.log("=== DEEP COMPETITOR RESEARCH: Starting deep dive into competitor websites ===");
 
   // Get ALL competitors for initial deep dive (this is before selection)
@@ -821,12 +874,20 @@ Return a JSON "competitors" array with: name, description, websiteUrl
 Each competitor MUST have a valid URL starting with http:// or https://`;
 
       try {
-        const { content } = await summaryService.generateResponse([
+        const replacementResponse = await summaryService.generateResponse([
           { role: "system", content: "You are a market research analyst. Find replacement competitors in JSON format. Always respond with valid JSON only." },
           { role: "user", content: replacementPrompt }
         ], 0.3, 3000, "summary");
-        
-        const replacementResult = JSON.parse(content);
+
+        aiUsage.push({
+          model: replacementResponse.modelUsed,
+          modelType: "summary",
+          inputTokens: replacementResponse.inputTokens,
+          outputTokens: replacementResponse.outputTokens,
+          costCents: calculateCallCost("summary", replacementResponse.inputTokens, replacementResponse.outputTokens),
+        });
+
+        const replacementResult = JSON.parse(replacementResponse.content);
         
         // Scrape the replacement competitors
         for (const replacement of replacementResult.competitors || []) {
@@ -934,7 +995,7 @@ Each competitor MUST have a valid URL starting with http:// or https://`;
   }
 }
 
-async function processCompetitorSelection(projectId: number, project: any, previousData: any): Promise<any> {
+async function processCompetitorSelection(projectId: number, project: any, previousData: any, aiUsage: AIUsageRecord[]): Promise<any> {
   console.log("=== COMPETITOR SELECTION: Starting deep website reading for competitor selection ===");
 
   const competitors = previousData?.competitors || [];
@@ -978,12 +1039,20 @@ Return a JSON "competitors" array with: name, description, websiteUrl
 Do NOT repeat any competitor already listed above.`;
 
     try {
-      const { content } = await summaryService.generateResponse([
+      const compSelResponse = await summaryService.generateResponse([
         { role: "system", content: "You are a market research analyst. Find competitors in JSON format. Only include competitors with verified active websites. Always respond with valid JSON only." },
         { role: "user", content: prompt }
       ], 0.3, 3000, "summary");
-      
-      const result = JSON.parse(content);
+
+      aiUsage.push({
+        model: compSelResponse.modelUsed,
+        modelType: "summary",
+        inputTokens: compSelResponse.inputTokens,
+        outputTokens: compSelResponse.outputTokens,
+        costCents: calculateCallCost("summary", compSelResponse.inputTokens, compSelResponse.outputTokens),
+      });
+
+      const result = JSON.parse(compSelResponse.content);
       
       for (const newCompetitor of result.competitors || []) {
         if (newCompetitor.websiteUrl && !existingNames.has(newCompetitor.name)) {
@@ -1069,12 +1138,20 @@ Return JSON:
   "marketPosition": "description"
 }`;
 
-      const { content } = await summaryService.generateResponse([
+      const deepResponse = await summaryService.generateResponse([
         { role: "system", content: "You are a competitive intelligence analyst. Deeply analyze competitor websites across multiple pages. Provide comprehensive scoring and analysis." },
         { role: "user", content: deepPrompt }
       ], 0.3, 8000, "analysis");
-      
-      const result = JSON.parse(content);
+
+      aiUsage.push({
+        model: deepResponse.modelUsed,
+        modelType: "analysis",
+        inputTokens: deepResponse.inputTokens,
+        outputTokens: deepResponse.outputTokens,
+        costCents: calculateCallCost("analysis", deepResponse.inputTokens, deepResponse.outputTokens),
+      });
+
+      const result = JSON.parse(deepResponse.content);
       deepAnalysisResults.push({
         competitor,
         analysis: result,
@@ -1122,7 +1199,7 @@ Return JSON:
   };
 }
 
-async function processReviewAggregation(projectId: number, project: any, previousData: any): Promise<any> {
+async function processReviewAggregation(projectId: number, project: any, previousData: any, aiUsage: AIUsageRecord[]): Promise<any> {
   console.log("=== REVIEW AGGREGATION: Starting to gather reviews from multiple sources ===");
   
   // Get top 6 competitors from database
@@ -1186,7 +1263,7 @@ async function processReviewAggregation(projectId: number, project: any, previou
   }
 }
 
-async function processFactorGeneration(projectId: number, project: any, previousData: any): Promise<any> {
+async function processFactorGeneration(projectId: number, project: any, previousData: any, aiUsage: AIUsageRecord[]): Promise<any> {
   console.log("processFactorGeneration called, previousData keys:", previousData ? Object.keys(previousData) : "null");
   
   const prompt = `Based on the business research and competitors for "${project.name}", identify key factors that customers use to compare providers in this industry.
@@ -1196,12 +1273,20 @@ async function processFactorGeneration(projectId: number, project: any, previous
 
   Return JSON with a "factors" array where each factor has: name, description, isEliminated, isReduced, isRaised, isNewCreation.`;
 
-  const { content } = await analysisService.generateResponse([
+  const factorResponse = await analysisService.generateResponse([
     { role: "system", content: "You are a strategy consultant. Define key factors with EXACT JSON structure: {\"factors\": [{\"name\": string, \"description\": string, \"isEliminated\": boolean, \"isReduced\": boolean, \"isRaised\": boolean, \"isNewCreation\": boolean}]}. Respond with valid JSON only. Be consistent and precise." },
     { role: "user", content: prompt },
   ], 0.1, 2000, "analysis");
 
-  const result = JSON.parse(content);
+  aiUsage.push({
+    model: factorResponse.modelUsed,
+    modelType: "analysis",
+    inputTokens: factorResponse.inputTokens,
+    outputTokens: factorResponse.outputTokens,
+    costCents: calculateCallCost("analysis", factorResponse.inputTokens, factorResponse.outputTokens),
+  });
+
+  const result = JSON.parse(factorResponse.content);
   
   // Save factors to the database
   const db = getDb();
@@ -1225,7 +1310,7 @@ async function processFactorGeneration(projectId: number, project: any, previous
   return { ...result, ...previousData, factors: savedFactors };
 }
 
-async function processCompanyScoring(projectId: number, project: any, previousData: any): Promise<any> {
+async function processCompanyScoring(projectId: number, project: any, previousData: any, aiUsage: AIUsageRecord[]): Promise<any> {
   console.log("processCompanyScoring called, previousData keys:", previousData ? Object.keys(previousData) : "null");
   const factors = previousData?.factors || [];
   const competitors = previousData?.competitors || [];
@@ -1281,11 +1366,20 @@ Return JSON with "scores" array containing ${companyNames.length} entries, one p
   );
 
   try {
-    const response = await analysisService.generateResponse([
+    const scoringResponse = await analysisService.generateResponse([
       { role: "system", content: "You are a data analyst. Score each company 0-10 on each factor with confidence (0-1). Format: {\"scores\": [{\"companyName\": string, \"scores\": {\"factorName\": {\"score\": number, \"confidence\": number, \"explanation\": string}}}]}. Always respond with valid JSON only. Be consistent in your scoring methodology." },
       { role: "user", content: prompt },
     ], 0.1, 4000, "analysis");
-    content = response.content;
+
+    aiUsage.push({
+      model: scoringResponse.modelUsed,
+      modelType: "analysis",
+      inputTokens: scoringResponse.inputTokens,
+      outputTokens: scoringResponse.outputTokens,
+      costCents: calculateCallCost("analysis", scoringResponse.inputTokens, scoringResponse.outputTokens),
+    });
+
+    content = scoringResponse.content;
     console.log("  Raw AI content (first 500 chars):", content.substring(0, 500));
     result = JSON.parse(content);
     console.log("  AI scoring succeeded, result keys:", Object.keys(result));
@@ -1452,7 +1546,7 @@ async function generateAndSaveDummyScores(projectId: number, factors: any[], com
   return { scores };
 }
 
-async function processStrategyCanvas(projectId: number, project: any, previousData: any): Promise<any> {
+async function processStrategyCanvas(projectId: number, project: any, previousData: any, aiUsage: AIUsageRecord[]): Promise<any> {
   const factors = previousData?.factors || [];
   const companyScores = previousData?.scores || [];
   
@@ -1462,17 +1556,25 @@ async function processStrategyCanvas(projectId: number, project: any, previousDa
   
   Return JSON with factors array and scores array.`;
 
-  const { content } = await analysisService.generateResponse([
+  const canvasResponse = await analysisService.generateResponse([
     { role: "system", content: "You are a strategy consultant. Create a strategy canvas in JSON format with EXACT structure. Respond with valid JSON only. Be consistent in factor analysis." },
     { role: "user", content: prompt },
   ], 0.1, 3000, "analysis");
 
-  const result = JSON.parse(content);
+  aiUsage.push({
+    model: canvasResponse.modelUsed,
+    modelType: "analysis",
+    inputTokens: canvasResponse.inputTokens,
+    outputTokens: canvasResponse.outputTokens,
+    costCents: calculateCallCost("analysis", canvasResponse.inputTokens, canvasResponse.outputTokens),
+  });
+
+  const result = JSON.parse(canvasResponse.content);
 
   return { ...result, ...previousData };
 }
 
-async function processNextBigThing(projectId: number, project: any, previousData: any): Promise<any> {
+async function processNextBigThing(projectId: number, project: any, previousData: any, aiUsage: AIUsageRecord[]): Promise<any> {
   const businessResearch = previousData?.businessResearch || {};
   const factors = previousData?.factors || [];
   const factorsList = factors.length > 0 && Array.isArray(factors[0]) ? factors.flat() : factors;
@@ -1506,11 +1608,20 @@ Return JSON with 'strategies' array containing 2 objects with: title, summary, e
       const nextBigThingAIService = new AIService();
       nextBigThingAIService.requestTimeoutMs = 30000; // 30 seconds
       
-      const response = await nextBigThingAIService.generateResponse([
+      const nbtResponse = await nextBigThingAIService.generateResponse([
         { role: "system", content: "You are a strategy expert. Create JSON with 'strategies' array. EACH strategy MUST include ALL of these fields with real content: title, summary, eliminate, reduce, raise, create, difficulty (1-10), targetCustomer (WHO is the customer), positioningStatement (in quotes), risks (array with 2+ items), operationalImplications. Be concise but complete - do not use placeholder text like 'Not specified'." },
         { role: "user", content: prompt },
       ], 0.7, 1500, "strategy");
-      content = response.content;
+
+      aiUsage.push({
+        model: nbtResponse.modelUsed,
+        modelType: "strategy",
+        inputTokens: nbtResponse.inputTokens,
+        outputTokens: nbtResponse.outputTokens,
+        costCents: calculateCallCost("strategy", nbtResponse.inputTokens, nbtResponse.outputTokens),
+      });
+
+      content = nbtResponse.content;
       result = JSON.parse(content);
       break; // Success, exit retry loop
     } catch (error) {
@@ -1617,7 +1728,7 @@ Return JSON with 'strategies' array containing 2 objects with: title, summary, e
   return { ...result, ...previousData, strategies: savedOptions };
 }
 
-async function processReportAssembly(projectId: number, project: any, previousData: any): Promise<any> {
+async function processReportAssembly(projectId: number, project: any, previousData: any, aiUsage: AIUsageRecord[]): Promise<any> {
   // Extract data from previous stages
   const businessResearch = previousData?.businessResearch || {};
   const strategies = previousData?.strategies || [];
@@ -1694,8 +1805,8 @@ Ensure nextBigThingOptions includes COMPLETE strategy data including difficulty 
       // Create a custom AI service instance with longer timeout for comprehensive reports
       const reportAIService = new AIService();
       reportAIService.requestTimeoutMs = 25000; // 25 seconds for report generation
-      
-      const response = await reportAIService.generateResponse([
+
+      const reportResponse = await reportAIService.generateResponse([
         { role: "system", content: `You are a strategic analysis report writer. Create detailed JSON with all requested fields.
 CRITICAL: Every strategy object in nextBigThingOptions MUST include ALL of these fields:
 - title (string)
@@ -1713,7 +1824,16 @@ CRITICAL: Every strategy object in nextBigThingOptions MUST include ALL of these
 - revenuePotential (string or null)` },
         { role: "user", content: prompt },
       ], 0.7, 2000, "strategy"); // More tokens for comprehensive report
-      content = response.content;
+
+      aiUsage.push({
+        model: reportResponse.modelUsed,
+        modelType: "strategy",
+        inputTokens: reportResponse.inputTokens,
+        outputTokens: reportResponse.outputTokens,
+        costCents: calculateCallCost("strategy", reportResponse.inputTokens, reportResponse.outputTokens),
+      });
+
+      content = reportResponse.content;
       result = JSON.parse(content);
       break; // Success, exit retry loop
     } catch (error) {

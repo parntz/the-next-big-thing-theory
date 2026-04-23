@@ -204,6 +204,15 @@ export class AIService {
     const costs = AI_COSTS[modelType];
     return (inputTokens / 1_000_000) * costs.input + (outputTokens / 1_000_000) * costs.output;
   }
+
+  // Get cost per 1M tokens for a model type
+  getInputCostPerM(modelType: ModelType): number {
+    return AI_COSTS[modelType].input;
+  }
+
+  getOutputCostPerM(modelType: ModelType): number {
+    return AI_COSTS[modelType].output;
+  }
 }
 
 // AI Service instances for different tasks
